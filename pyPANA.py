@@ -88,6 +88,29 @@ MAX_RETRANSMISSIONS = 3
 DEFAULT_SESSION_LIFETIME = 3600  # 1 hour in seconds
 SESSION_CLEANUP_INTERVAL = 60  # Check for expired sessions every minute
 
+# PANA State Machine States (RFC5191 Section 4)
+# PaC States
+PAC_STATE_INITIAL = 'INITIAL'
+PAC_STATE_WAIT_PAN_OR_PAR = 'WAIT_PAN_OR_PAR'
+PAC_STATE_WAIT_EAP_MSG = 'WAIT_EAP_MSG'
+PAC_STATE_WAIT_EAP_RESULT = 'WAIT_EAP_RESULT'
+PAC_STATE_WAIT_EAP_RESULT_CLOSE = 'WAIT_EAP_RESULT_CLOSE'
+PAC_STATE_OPEN = 'OPEN'
+PAC_STATE_WAIT_PRA = 'WAIT_PRA'
+PAC_STATE_SESS_TERM = 'SESS_TERM'
+PAC_STATE_CLOSED = 'CLOSED'
+
+# PAA States
+PAA_STATE_INITIAL = 'INITIAL'
+PAA_STATE_WAIT_EAP_MSG = 'WAIT_EAP_MSG'
+PAA_STATE_WAIT_PAN_OR_PAR = 'WAIT_PAN_OR_PAR'
+PAA_STATE_WAIT_SUCC_PAN = 'WAIT_SUCC_PAN'
+PAA_STATE_WAIT_FAIL_PAN = 'WAIT_FAIL_PAN'
+PAA_STATE_OPEN = 'OPEN'
+PAA_STATE_WAIT_PRA = 'WAIT_PRA'
+PAA_STATE_SESS_TERM = 'SESS_TERM'
+PAA_STATE_CLOSED = 'CLOSED'
+
 # TLS Key Export Label (RFC5216)
 TLS_EXPORT_LABEL = b"EXPORTER_EAP_TLS_Key_Material"
 TLS_EXPORT_CONTEXT = b""
@@ -173,13 +196,25 @@ class PANAMessage:
         (self.flags, self.msg_type, 
          self.session_id, self.seq_number) = struct.unpack('!HHII', data[:16])
         
+        # Validate message type
+        valid_msg_types = [PANA_CLIENT_INITIATION, PANA_AUTH, PANA_TERMINATION, 
+                          PANA_NOTIFICATION, PANA_REAUTH]
+        if self.msg_type not in valid_msg_types:
+            raise ValueError(f"Invalid PANA message type: {self.msg_type}")
+        
         # Parse AVPs
         offset = 16
         while offset < len(data):
+            if offset + 8 > len(data):
+                raise ValueError("Incomplete AVP header")
+                
             avp = AVP()
-            avp_len = avp.unpack(data[offset:])
-            self.avps.append(avp)
-            offset += avp_len
+            try:
+                avp_len = avp.unpack(data[offset:])
+                self.avps.append(avp)
+                offset += avp_len
+            except Exception as e:
+                raise ValueError(f"Failed to parse AVP at offset {offset}: {e}")
             
         return len(data)
 
@@ -216,7 +251,17 @@ class AVP:
             raise ValueError("Invalid AVP length")
             
         self.code, self.flags, length = struct.unpack('!HHI', data[:8])
+        
+        # Validate length
+        if length < 8:
+            raise ValueError(f"Invalid AVP length: {length}")
+        if length > len(data):
+            raise ValueError(f"AVP length ({length}) exceeds available data ({len(data)})")
+            
         value_length = length - 8
+        if 8 + value_length > len(data):
+            raise ValueError("Insufficient data for AVP value")
+            
         self.value = data[8:8 + value_length]
         
         # Account for padding
@@ -374,14 +419,30 @@ def generate_self_signed_cert():
     return cert, private_key
 
 class OpenSSLKeyExporter:
-    """OpenSSL直接統合によるKey Material Exporter"""
+    """OpenSSL Key Material Exporter with OpenSSL 3.x support"""
     
     def __init__(self):
-        # OpenSSLライブラリを直接ロード
-        self._lib = ctypes.CDLL("libssl.so.1.1")  # Linux
-        # self._lib = ctypes.CDLL("libssl-1_1-x64.dll")  # Windows
+        # Try to load OpenSSL 3.x first, then fall back to 1.1
+        self._lib = None
+        lib_names = [
+            "libssl.so.3",      # OpenSSL 3.x Linux
+            "libssl.so.1.1",    # OpenSSL 1.1 Linux
+            "libssl-3-x64.dll", # OpenSSL 3.x Windows
+            "libssl-1_1-x64.dll"# OpenSSL 1.1 Windows
+        ]
         
-        # SSL_export_keying_material関数を定義
+        for lib_name in lib_names:
+            try:
+                self._lib = ctypes.CDLL(lib_name)
+                logging.info(f"Loaded OpenSSL library: {lib_name}")
+                break
+            except OSError:
+                continue
+                
+        if not self._lib:
+            raise Exception("Could not load OpenSSL library (tried 3.x and 1.1)")
+        
+        # SSL_export_keying_material function definition (same for 1.1 and 3.x)
         self._export_func = self._lib.SSL_export_keying_material
         self._export_func.argtypes = [c_void_p, c_char_p, c_size_t, 
                                      c_char_p, c_size_t, c_char_p, 
@@ -389,12 +450,26 @@ class OpenSSLKeyExporter:
         self._export_func.restype = c_int
     
     def export_keying_material(self, ssl_conn, label, length, context=b""):
-        """RFC5705準拠のkey material export"""
+        """RFC5705 compliant key material export"""
         out = ctypes.create_string_buffer(length)
         
-        # SSL_export_keying_materialを呼び出し
+        # Get SSL pointer from pyOpenSSL connection
+        if hasattr(ssl_conn, '_ptr'):
+            ssl_ptr = ssl_conn._ptr
+        elif hasattr(ssl_conn, '_ssl'):
+            ssl_ptr = ssl_conn._ssl._ptr
+        else:
+            # Try to extract from Python ssl.SSLSocket
+            ssl_ptr = None
+            if hasattr(ssl_conn, '_sslobj') and hasattr(ssl_conn._sslobj, '_ptr'):
+                ssl_ptr = ssl_conn._sslobj._ptr
+                
+        if not ssl_ptr:
+            raise Exception("Could not extract SSL pointer from connection")
+        
+        # Call SSL_export_keying_material
         result = self._export_func(
-            ssl_conn._ptr,  # SSL*
+            ssl_ptr,        # SSL*
             out,            # unsigned char *out
             length,         # size_t olen
             label,          # const char *label
@@ -580,35 +655,52 @@ class EAPTLSHandler:
         """Derive MSK and EMSK according to RFC5216"""
         # Export 128 octets of key material
         # First 64 octets for MSK, next 64 for EMSK
-        if self.ssl_conn:  # pyOpenSSL接続オブジェクト
-          exporter = OpenSSLKeyExporter()
-          
-          # 128オクテットのkey materialをエクスポート
-          key_material = exporter.export_keying_material(
-              self.ssl_conn,
-              b"EXPORTER_EAP_TLS_Key_Material",
-              128
-          )
-          
-          self.msk = key_material[:64]
-          self.emsk = key_material[64:128]
-          
-        elif self.ssl_socket:
+        key_material = None
+        
+        # Try different methods to export key material
+        if hasattr(self, 'sslobj') and self.sslobj:
+            try:
+                # Try native Python SSL export first (Python 3.8+)
+                if hasattr(self.sslobj, 'export_keying_material'):
+                    key_material = self.sslobj.export_keying_material(
+                        TLS_EXPORT_LABEL,
+                        128,
+                        TLS_EXPORT_CONTEXT
+                    )
+                    self.logger.info("Using native Python SSL key export")
+                else:
+                    # Try OpenSSL direct export
+                    try:
+                        exporter = OpenSSLKeyExporter()
+                        key_material = exporter.export_keying_material(
+                            self.sslobj,
+                            TLS_EXPORT_LABEL,
+                            128,
+                            TLS_EXPORT_CONTEXT
+                        )
+                        self.logger.info("Using OpenSSL direct key export")
+                    except Exception as e:
+                        self.logger.debug(f"OpenSSL export failed: {e}")
+                        
+            except Exception as e:
+                self.logger.debug(f"Key export failed: {e}")
+                
+        # If export failed, try TLS PRF-based method
+        if not key_material:
             key_material = TLSKeyExporter.export_key_material(
-                self.ssl_socket,
+                self.sslobj if hasattr(self, 'sslobj') else None,
                 TLS_EXPORT_LABEL,
                 TLS_EXPORT_CONTEXT,
                 128
             )
+            self.logger.info("Using TLS PRF-based key derivation")
             
-            self.msk = key_material[:64]
-            self.emsk = key_material[64:128]
-        else:
-            # Fallback for testing without proper TLS export
-            self.logger.warning("Using fallback MSK/EMSK generation (not RFC compliant)")
-            base_material = hashlib.sha256(b'EAP-TLS-' + os.urandom(32)).digest()
-            self.msk = base_material + hashlib.sha256(base_material + b'MSK').digest()
-            self.emsk = hashlib.sha256(base_material + b'EMSK').digest() + hashlib.sha256(base_material + b'EMSK2').digest()
+        # Split key material into MSK and EMSK
+        self.msk = key_material[:64]
+        self.emsk = key_material[64:128]
+        
+        self.logger.debug(f"MSK derived: {self.msk.hex()[:32]}...")
+        self.logger.debug(f"EMSK derived: {self.emsk.hex()[:32]}...")
     
     def process_eap_message(self, eap_data):
         """Process EAP message and return response"""
@@ -754,6 +846,7 @@ class EAPTLSHandler:
                 if hasattr(self.sslobj, 'cipher') and self.sslobj.cipher():
                     # Handshake complete, derive MSK/EMSK
                     self.state = 'COMPLETE'
+                    self.ssl_socket = self.sslobj  # Save for key export
                     self._derive_msk_emsk()
                     
                     if self.is_server:
@@ -817,7 +910,7 @@ class PANASession:
         self.created_time = time.time()
         self.last_activity = time.time()
         self.lifetime = DEFAULT_SESSION_LIFETIME
-        self.state = 'INIT'
+        self.state = PAA_STATE_INITIAL  # RFC5191 state machine
         self.lock = threading.Lock()
         
     def update_activity(self):
@@ -910,6 +1003,7 @@ class PANAClient:
         self.running = True
         self.session_lifetime = DEFAULT_SESSION_LIFETIME
         self.session_start_time = None
+        self.state = PAC_STATE_INITIAL  # RFC5191 state machine
         self.logger = logging.getLogger('PANA-Client')
         
     def generate_nonce(self):
@@ -918,6 +1012,10 @@ class PANAClient:
     
     def send_pci(self):
         """Send PANA-Client-Initiation (RFC5191 compliant)"""
+        if self.state != PAC_STATE_INITIAL:
+            self.logger.error(f"Invalid state for PCI: {self.state}")
+            return
+            
         msg = PANAMessage()
         msg.flags = FLAG_REQUEST | FLAG_START
         msg.msg_type = PANA_CLIENT_INITIATION
@@ -943,8 +1041,18 @@ class PANAClient:
         self.retransmit_mgr.add_message(self.seq_number, message_data, (self.server_addr, self.server_port))
         self.seq_number += 1
         
+        # Update state
+        self.state = PAC_STATE_WAIT_PAN_OR_PAR
+        self.logger.info(f"State transition: {PAC_STATE_INITIAL} -> {PAC_STATE_WAIT_PAN_OR_PAR}")
+        
     def handle_auth_msg(self, msg):
         """Handle PANA-Auth message (Request or Answer)"""
+        # Validate state
+        if self.state not in [PAC_STATE_WAIT_PAN_OR_PAR, PAC_STATE_WAIT_EAP_MSG, 
+                             PAC_STATE_WAIT_EAP_RESULT, PAC_STATE_OPEN]:
+            self.logger.error(f"Received AUTH message in invalid state: {self.state}")
+            return
+            
         # Remove from retransmission queue if this is a response to our request
         if not msg.is_request() and self.seq_number > 0:
             self.retransmit_mgr.remove_message(self.seq_number - 1)
@@ -1010,6 +1118,8 @@ class PANAClient:
             if result_code == 2001:  # Success
                 self.logger.info("PANA authentication successful")
                 self.session_start_time = time.time()
+                self.state = PAC_STATE_OPEN
+                self.logger.info(f"State transition: {self.state} -> {PAC_STATE_OPEN}")
                 
                 # Send final answer if this was a request
                 if msg.is_request():
@@ -1039,6 +1149,11 @@ class PANAClient:
                 self.logger.error(f"Authentication failed with result code: {result_code}")
                 
         elif eap_payload:
+            # Update state for EAP processing
+            if self.state == PAC_STATE_WAIT_PAN_OR_PAR:
+                self.state = PAC_STATE_WAIT_EAP_MSG
+                self.logger.info(f"State transition: {PAC_STATE_WAIT_PAN_OR_PAR} -> {PAC_STATE_WAIT_EAP_MSG}")
+            
             # Process EAP message
             eap_response = self.eap_handler.process_eap_message(eap_payload)
             
@@ -1089,107 +1204,7 @@ class PANAClient:
                     self.send_termination_request()
                     break
                 elif remaining <= 300:  # 5 minutes before expiry
-                    self.logger.info(f"Received message: type={msg.msg_type}, flags=0x{msg.flags:04x}, seq={msg.seq_number} from {addr}")
-                
-                if msg.msg_type == PANA_CLIENT_INITIATION:
-                    self.handle_pci(msg, addr)
-                elif msg.msg_type == PANA_AUTH:
-                    self.handle_auth_msg(msg, addr)
-                elif msg.msg_type == PANA_REAUTH:
-                    self.handle_reauth_msg(msg, addr)
-                elif msg.msg_type == PANA_NOTIFICATION:
-                    self.handle_notification_msg(msg)
-                elif msg.msg_type == PANA_TERMINATION:
-                    self.handle_termination_msg(msg, addr)
-                    
-            except Exception as e:
-                self.logger.error(f"Error: {e}", exc_info=True)
-                
-    def stop(self):
-        """Stop PAA"""
-        self.running = False
-        self.retransmit_mgr.stop()
-        self.session_mgr.stop()
-        self.socket.close()
-
-# Example usage
-if __name__ == "__main__":
-    import sys
-    import signal
-    
-    def signal_handler(sig, frame):
-        print("\nShutting down...")
-        if 'server' in globals():
-            server.stop()
-        if 'client' in globals():
-            client.running = False
-        sys.exit(0)
-        
-    signal.signal(signal.SIGINT, signal_handler)
-    
-    if len(sys.argv) < 2:
-        print("RFC5191 PANA Implementation")
-        print("===========================")
-        print("Usage: python pana.py [paa|pac] [server_addr]")
-        print("")
-        print("Modes:")
-        print("  paa         - Run as PANA Authentication Agent (server)")
-        print("  pac <addr>  - Run as PANA Client (connect to server)")
-        print("")
-        print("Example:")
-        print("  Terminal 1: python pana.py paa")
-        print("  Terminal 2: python pana.py pac 127.0.0.1")
-        print("")
-        print("Features:")
-        print("  - RFC5191 compliant PANA protocol")
-        print("  - Complete EAP-TLS authentication (RFC5216)")
-        print("  - PRF_HMAC_SHA2_256, AUTH_HMAC_SHA2_256_128, AES128_CTR")
-        print("  - Message retransmission with R-bit support")
-        print("  - Session lifetime management")
-        print("  - Re-authentication support")
-        sys.exit(1)
-        
-    mode = sys.argv[1].lower()
-    
-    if mode == 'paa':
-        # Run as PANA Authentication Agent
-        print("Starting PANA Authentication Agent (PAA)...")
-        print("Listening on UDP port 716")
-        print("Press Ctrl+C to stop")
-        print("")
-        
-        server = PANAAuthAgent()
-        try:
-            server.run()
-        except KeyboardInterrupt:
-            print("\nStopping PAA...")
-            server.stop()
-            print("PAA stopped.")
-            
-    elif mode == 'pac':
-        # Run as PANA Client
-        if len(sys.argv) < 3:
-            print("Error: Please provide server address for PaC mode")
-            print("Example: python pana.py pac 192.168.1.1")
-            sys.exit(1)
-            
-        server_addr = sys.argv[2]
-        print(f"Starting PANA Client (PaC)...")
-        print(f"Connecting to PAA at {server_addr}:716")
-        print("Press Ctrl+C to stop")
-        print("")
-        
-        client = PANAClient(server_addr)
-        try:
-            client.run()
-        except KeyboardInterrupt:
-            print("\nStopping PaC...")
-            client.running = False
-            print("PaC stopped.")
-            
-    else:
-        print(f"Error: Invalid mode '{mode}'. Use 'paa' or 'pac'")
-        sys.exit(1)Session expiring in {remaining} seconds, requesting re-authentication")
+                    self.logger.info(f"Session expiring in {remaining} seconds, requesting re-authentication")
                     self.send_reauth_request()
                     break
                     
@@ -1214,6 +1229,25 @@ if __name__ == "__main__":
             auth_value = self.crypto_ctx.compute_auth(msg_without_auth)
             auth_avp = AVP(AVP_AUTH, 0, auth_value)
             msg.avps.append(auth_avp)
+        
+        message_data = msg.pack()
+        self.socket.sendto(message_data, (self.server_addr, self.server_port))
+        self.retransmit_mgr.add_message(self.seq_number, message_data, (self.server_addr, self.server_port))
+        self.seq_number += 1
+    
+    def send_reauth_request(self):
+        """Send PANA-Reauth-Request"""
+        msg = PANAMessage()
+        msg.flags = FLAG_REQUEST | FLAG_AUTH
+        msg.msg_type = PANA_REAUTH
+        msg.session_id = self.session_id
+        msg.seq_number = self.seq_number
+        
+        # Add AUTH AVP
+        msg_without_auth = msg.pack()
+        auth_value = self.crypto_ctx.compute_auth(msg_without_auth)
+        auth_avp = AVP(AVP_AUTH, 0, auth_value)
+        msg.avps.append(auth_avp)
         
         message_data = msg.pack()
         self.socket.sendto(message_data, (self.server_addr, self.server_port))
@@ -1245,23 +1279,6 @@ if __name__ == "__main__":
                 # Ping response received, remove from retransmission
                 self.retransmit_mgr.remove_message(self.seq_number - 1)
                 self.logger.debug("Ping response received")
-        """Send PANA-Reauth-Request"""
-        msg = PANAMessage()
-        msg.flags = FLAG_REQUEST | FLAG_AUTH
-        msg.msg_type = PANA_REAUTH
-        msg.session_id = self.session_id
-        msg.seq_number = self.seq_number
-        
-        # Add AUTH AVP
-        msg_without_auth = msg.pack()
-        auth_value = self.crypto_ctx.compute_auth(msg_without_auth)
-        auth_avp = AVP(AVP_AUTH, 0, auth_value)
-        msg.avps.append(auth_avp)
-        
-        message_data = msg.pack()
-        self.socket.sendto(message_data, (self.server_addr, self.server_port))
-        self.retransmit_mgr.add_message(self.seq_number, message_data, (self.server_addr, self.server_port))
-        self.seq_number += 1
         
     def send_termination_request(self):
         """Send PANA-Termination-Request"""
@@ -1292,8 +1309,12 @@ if __name__ == "__main__":
         """Run PANA client"""
         self.logger.info("Starting PANA Client...")
         
-        # Send PANA-Client-Initiation
-        self.send_pci()
+        try:
+            # Send PANA-Client-Initiation
+            self.send_pci()
+        except Exception as e:
+            self.logger.error(f"Failed to send PCI: {e}")
+            return
         
         # Main loop
         while self.running:
@@ -1304,13 +1325,22 @@ if __name__ == "__main__":
                     continue
                     
                 data, addr = self.socket.recvfrom(4096)
+                if not data:
+                    continue
+                    
                 msg = PANAMessage()
-                msg.unpack(data)
+                try:
+                    msg.unpack(data)
+                except ValueError as e:
+                    self.logger.error(f"Failed to parse PANA message: {e}")
+                    continue
                 
                 self.logger.info(f"Received message: type={msg.msg_type}, flags=0x{msg.flags:04x}, seq={msg.seq_number}")
                 
                 if msg.msg_type == PANA_AUTH:
                     self.handle_auth_msg(msg)
+                elif msg.msg_type == PANA_NOTIFICATION:
+                    self.handle_notification_msg(msg)
                 elif msg.msg_type == PANA_REAUTH:
                     # Handle re-authentication response
                     if not msg.is_request():
@@ -1364,12 +1394,18 @@ class PANAAuthAgent:
     def __init__(self, bind_addr='0.0.0.0', bind_port=716):
         self.bind_addr = bind_addr
         self.bind_port = bind_port
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind((bind_addr, bind_port))
+        self.logger = logging.getLogger('PANA-AuthAgent')
+        
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket.bind((bind_addr, bind_port))
+        except OSError as e:
+            self.logger.error(f"Failed to bind to {bind_addr}:{bind_port}: {e}")
+            raise
+            
         self.session_mgr = SessionManager()
         self.retransmit_mgr = RetransmissionManager(self.socket)
         self.running = True
-        self.logger = logging.getLogger('PANA-AuthAgent')
         
     def handle_pci(self, msg, addr):
         """Handle PANA-Client-Initiation"""
@@ -1503,7 +1539,9 @@ class PANAAuthAgent:
                     self.retransmit_mgr.add_message(session.seq_number, message_data, addr)
                     session.seq_number += 1
                     
-                    session.state = 'AUTHENTICATED'
+                    # Update state to WAIT_SUCC_PAN
+                    session.state = PAA_STATE_WAIT_SUCC_PAN
+                    self.logger.info(f"State transition: {PAA_STATE_WAIT_EAP_MSG} -> {PAA_STATE_WAIT_SUCC_PAN}")
                     self.logger.info(f"Authentication successful for session {session_id:08x}")
                 else:
                     # Continue EAP exchange
@@ -1524,6 +1562,9 @@ class PANAAuthAgent:
                     
         elif msg.flags & FLAG_COMPLETE:
             # Client acknowledged final auth message
+            if session.state == PAA_STATE_WAIT_SUCC_PAN:
+                session.state = PAA_STATE_OPEN
+                self.logger.info(f"State transition: {PAA_STATE_WAIT_SUCC_PAN} -> {PAA_STATE_OPEN}")
             self.logger.info(f"Client acknowledged authentication for session {session_id:08x}")
             
     def handle_reauth_msg(self, msg, addr):
@@ -1613,6 +1654,8 @@ class PANAAuthAgent:
                 # Ping response received
                 self.retransmit_mgr.remove_message(session.seq_number - 1)
                 self.logger.debug(f"Ping response received for session {session_id:08x}")
+                
+    def handle_termination_msg(self, msg, addr):
         """Handle PANA-Termination message"""
         session_id = msg.session_id
         session = self.session_mgr.get_session(session_id)
@@ -1653,8 +1696,15 @@ class PANAAuthAgent:
                     continue
                     
                 data, addr = self.socket.recvfrom(4096)
+                if not data:
+                    continue
+                    
                 msg = PANAMessage()
-                msg.unpack(data)
+                try:
+                    msg.unpack(data)
+                except ValueError as e:
+                    self.logger.error(f"Failed to parse PANA message from {addr}: {e}")
+                    continue
                 
                 self.logger.info(f"Received message: type={msg.msg_type}, flags=0x{msg.flags:04x}, seq={msg.seq_number} from {addr}")
                 
@@ -1666,6 +1716,8 @@ class PANAAuthAgent:
                     self.handle_reauth_msg(msg, addr)
                 elif msg.msg_type == PANA_TERMINATION:
                     self.handle_termination_msg(msg, addr)
+                elif msg.msg_type == PANA_NOTIFICATION:
+                    self.handle_notification_msg(msg, addr)
                     
             except Exception as e:
                 self.logger.error(f"Error: {e}", exc_info=True)
@@ -1679,79 +1731,80 @@ class PANAAuthAgent:
 
 # Example usage
 if __name__ == "__main__":
-   import sys
-   import signal
-   
-   def signal_handler(sig, frame):
-       print("\nShutting down...")
-       if 'server' in globals():
-           server.stop()
-       if 'client' in globals():
-           client.running = False
-       sys.exit(0)
-       
-   signal.signal(signal.SIGINT, signal_handler)
-   
-   if len(sys.argv) < 2:
-       print("RFC5191 PANA Implementation")
-       print("===========================")
-       print("Usage: python pana.py [paa|pac] [server_addr]")
-       print("")
-       print("Modes:")
-       print("  paa         - Run as PANA Authentication Agent (server)")
-       print("  pac <addr>  - Run as PANA Client (connect to server)")
-       print("")
-       print("Example:")
-       print("  Terminal 1: python pana.py paa")
-       print("  Terminal 2: python pana.py pac 127.0.0.1")
-       print("")
-       print("Features:")
-       print("  - RFC5191 compliant PANA protocol")
-       print("  - Complete EAP-TLS authentication (RFC5216)")
-       print("  - PRF_HMAC_SHA2_256, AUTH_HMAC_SHA2_256_128, AES128_CTR")
-       print("  - Message retransmission with R-bit support")
-       print("  - Session lifetime management")
-       print("  - Re-authentication support")
-       sys.exit(1)
-       
-   mode = sys.argv[1].lower()
-   
-   if mode == 'paa':
-       # Run as PANA Authentication Agent
-       print("Starting PANA Authentication Agent (PAA)...")
-       print("Listening on UDP port 716")
-       print("Press Ctrl+C to stop")
-       print("")
-       
-       server = PANAAuthAgent()
-       try:
-           server.run()
-       except KeyboardInterrupt:
-           print("\nStopping PAA...")
-           server.stop()
-           print("PAA stopped.")
-           
-   elif mode == 'pac':
-       # Run as PANA Client
-       if len(sys.argv) < 3:
-           print("Error: Please provide server address for PaC mode")
-           print("Example: python pana.py pac 192.168.1.1")
-           sys.exit(1)
-           
-       server_addr = sys.argv[2]
-       print(f"Starting PANA Client (PaC)...")
-       print(f"Connecting to PAA at {server_addr}:716")
-       print("Press Ctrl+C to stop")
-       print("")
-       
-       client = PANAClient(server_addr)
-       try:
-           client.run()
-       except KeyboardInterrupt:
-           print("\nStopping PaC...")
-           client.running = False
-           print("PaC stopped.")
-           
-   else:
-       print(f"Error: Invalid mode '{mode}'. Use 'paa' or 'pac'")
-       sys.exit(1)
+    import sys
+    import signal
+    
+    def signal_handler(sig, frame):
+        print("\nShutting down...")
+        if 'server' in globals():
+            server.stop()
+        if 'client' in globals():
+            client.running = False
+        sys.exit(0)
+        
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    if len(sys.argv) < 2:
+        print("RFC5191 PANA Implementation")
+        print("===========================")
+        print("Usage: python pyPANA.py [paa|pac] [server_addr]")
+        print("")
+        print("Modes:")
+        print("  paa         - Run as PANA Authentication Agent (server)")
+        print("  pac <addr>  - Run as PANA Client (connect to server)")
+        print("")
+        print("Example:")
+        print("  Terminal 1: python pyPANA.py paa")
+        print("  Terminal 2: python pyPANA.py pac 127.0.0.1")
+        print("")
+        print("Features:")
+        print("  - RFC5191 compliant PANA protocol")
+        print("  - Complete EAP-TLS authentication (RFC5216)")
+        print("  - PRF_HMAC_SHA2_256, AUTH_HMAC_SHA2_256_128, AES128_CTR")
+        print("  - Message retransmission with R-bit support")
+        print("  - Session lifetime management")
+        print("  - Re-authentication support")
+        print("  - OpenSSL 3.x support")
+        sys.exit(1)
+        
+    mode = sys.argv[1].lower()
+    
+    if mode == 'paa':
+        # Run as PANA Authentication Agent
+        print("Starting PANA Authentication Agent (PAA)...")
+        print("Listening on UDP port 716")
+        print("Press Ctrl+C to stop")
+        print("")
+        
+        server = PANAAuthAgent()
+        try:
+            server.run()
+        except KeyboardInterrupt:
+            print("\nStopping PAA...")
+            server.stop()
+            print("PAA stopped.")
+            
+    elif mode == 'pac':
+        # Run as PANA Client
+        if len(sys.argv) < 3:
+            print("Error: Please provide server address for PaC mode")
+            print("Example: python pyPANA.py pac 192.168.1.1")
+            sys.exit(1)
+            
+        server_addr = sys.argv[2]
+        print(f"Starting PANA Client (PaC)...")
+        print(f"Connecting to PAA at {server_addr}:716")
+        print("Press Ctrl+C to stop")
+        print("")
+        
+        client = PANAClient(server_addr)
+        try:
+            client.run()
+        except KeyboardInterrupt:
+            print("\nStopping PaC...")
+            client.running = False
+            print("PaC stopped.")
+            
+    else:
+        print(f"Error: Invalid mode '{mode}'. Use 'paa' or 'pac'")
+        sys.exit(1)
