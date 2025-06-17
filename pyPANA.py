@@ -929,37 +929,47 @@ class PANASession:
 class SessionManager:
     """Manages PANA sessions with lifetime control"""
     def __init__(self):
+        # Map (session_id, ip) -> PANASession
         self.sessions = {}
         self.lock = threading.Lock()
         self.running = True
         self.cleanup_thread = threading.Thread(target=self._cleanup_loop)
         self.cleanup_thread.daemon = True
         self.cleanup_thread.start()
-        
-    def create_session(self, session_id, addr):
-        """Create new session"""
+
+    def create_session(self, key, addr):
+        """Create new session
+
+        Parameters
+        ----------
+        key : tuple
+            Tuple of (session_id, ip)
+        addr : tuple
+            Full client address (ip, port)
+        """
+        session_id, _ = key
         with self.lock:
             session = PANASession(session_id, addr)
-            self.sessions[session_id] = session
+            self.sessions[key] = session
             return session
-            
-    def get_session(self, session_id):
-        """Get session by ID"""
+
+    def get_session(self, key):
+        """Get session by ID and IP"""
         with self.lock:
-            session = self.sessions.get(session_id)
+            session = self.sessions.get(key)
             if session and not session.is_expired():
                 session.update_activity()
                 return session
             return None
-            
-    def remove_session(self, session_id):
+
+    def remove_session(self, key):
         """Remove session"""
         with self.lock:
-            if session_id in self.sessions:
-                session = self.sessions[session_id]
+            if key in self.sessions:
+                session = self.sessions[key]
                 if session.eap_handler:
                     session.eap_handler.cleanup()
-                del self.sessions[session_id]
+                del self.sessions[key]
                 
     def _cleanup_loop(self):
         """Background thread to clean up expired sessions"""
@@ -967,15 +977,16 @@ class SessionManager:
             time.sleep(SESSION_CLEANUP_INTERVAL)
             with self.lock:
                 expired_sessions = []
-                for session_id, session in self.sessions.items():
+                for key, session in self.sessions.items():
                     if session.is_expired():
-                        expired_sessions.append(session_id)
-                        
-                for session_id in expired_sessions:
+                        expired_sessions.append(key)
+
+                for key in expired_sessions:
+                    session_id, _ = key
                     logging.info(f"Removing expired session {session_id:08x}")
-                    if self.sessions[session_id].eap_handler:
-                        self.sessions[session_id].eap_handler.cleanup()
-                    del self.sessions[session_id]
+                    if self.sessions[key].eap_handler:
+                        self.sessions[key].eap_handler.cleanup()
+                    del self.sessions[key]
                     
     def stop(self):
         """Stop session manager"""
@@ -1410,9 +1421,10 @@ class PANAAuthAgent:
     def handle_pci(self, msg, addr):
         """Handle PANA-Client-Initiation"""
         session_id = msg.session_id
-        
-        # Create new session
-        session = self.session_mgr.create_session(session_id, addr)
+
+        # Create new session indexed by (session_id, client IP)
+        key = (session_id, addr[0])
+        session = self.session_mgr.create_session(key, addr)
         session.eap_handler = EAPTLSHandler(is_server=True)
         
         # Extract client nonce and algorithms
@@ -1454,9 +1466,13 @@ class PANAAuthAgent:
     def handle_auth_msg(self, msg, addr):
         """Handle PANA-Auth message"""
         session_id = msg.session_id
-        session = self.session_mgr.get_session(session_id)
+        key = (session_id, addr[0])
+        session = self.session_mgr.get_session(key)
         if not session:
             return
+
+        # Update address in case port changed
+        session.addr = addr
             
         # Remove from retransmission queue if this is a response
         if not msg.is_request() and session.seq_number > 0:
@@ -1570,9 +1586,13 @@ class PANAAuthAgent:
     def handle_reauth_msg(self, msg, addr):
         """Handle PANA-Reauth message"""
         session_id = msg.session_id
-        session = self.session_mgr.get_session(session_id)
+        key = (session_id, addr[0])
+        session = self.session_mgr.get_session(key)
         if not session:
             return
+
+        # Update address in case port changed
+        session.addr = addr
             
         # Verify AUTH AVP
         auth_avp = None
@@ -1627,9 +1647,13 @@ class PANAAuthAgent:
     def handle_notification_msg(self, msg, addr):
         """Handle PANA-Notification message (including Ping)"""
         session_id = msg.session_id
-        session = self.session_mgr.get_session(session_id)
+        key = (session_id, addr[0])
+        session = self.session_mgr.get_session(key)
         if not session:
             return
+
+        # Update address in case port changed
+        session.addr = addr
             
         if msg.flags & FLAG_PING:
             # This is a Ping request or response
@@ -1658,9 +1682,13 @@ class PANAAuthAgent:
     def handle_termination_msg(self, msg, addr):
         """Handle PANA-Termination message"""
         session_id = msg.session_id
-        session = self.session_mgr.get_session(session_id)
+        key = (session_id, addr[0])
+        session = self.session_mgr.get_session(key)
         if not session:
             return
+
+        # Update address in case port changed
+        session.addr = addr
             
         if msg.is_request():
             # Send termination answer
@@ -1681,7 +1709,7 @@ class PANAAuthAgent:
             session.seq_number += 1
             
         # Remove session
-        self.session_mgr.remove_session(session_id)
+        self.session_mgr.remove_session(key)
         self.logger.info(f"Session {session_id:08x} terminated")
         
     def run(self):

@@ -118,8 +118,28 @@ def test_encryption():
     # Decrypt
     decrypted = ctx.decrypt(ciphertext)
     assert decrypted == plaintext
-    
+
     print("✓ Encryption tests passed")
+
+def test_session_manager_indexing():
+    """Test SessionManager indexing by session ID and IP"""
+    print("\nTesting SessionManager indexing...")
+
+    from pyPANA import SessionManager
+
+    mgr = SessionManager()
+    sid = 0xdeadbeef
+    ip = '192.0.2.1'
+    key = (sid, ip)
+    session = mgr.create_session(key, (ip, 12345))
+
+    # Retrieve using correct key
+    assert mgr.get_session(key) is session
+
+    # Mismatched IP should not return a session
+    assert mgr.get_session((sid, '192.0.2.2')) is None
+
+    mgr.remove_session(key)
 
 def main():
     """Run all tests"""
@@ -131,6 +151,7 @@ def main():
         test_crypto_context()
         test_avp_handling()
         test_encryption()
+        test_session_manager_indexing()
         
         print("\n✅ All tests passed!")
         
