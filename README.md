@@ -132,6 +132,24 @@ AUTH_ALGORITHM = AUTH_HMAC_SHA2_256_128
 ENCR_ALGORITHM = AES128_CTR
 ```
 
+### RADIUS Backend
+
+`PANAAuthAgent` can proxy EAP authentication to an external RADIUS server.
+Specify the server address, shared secret and port when creating the agent:
+
+```python
+from pyPANA import PANAAuthAgent
+
+paa = PANAAuthAgent(
+    bind_addr='0.0.0.0',
+    bind_port=716,
+    radius_server='192.168.1.10',
+    radius_secret='topsecret',
+    radius_port=1812
+)
+```
+
+
 ### Using with Certificates
 
 For production use, replace the self-signed certificate generation with real certificates:
