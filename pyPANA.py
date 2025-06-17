@@ -23,7 +23,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import rsa, ec
 from OpenSSL import SSL, crypto
 import ctypes
 from ctypes import c_void_p, c_char_p, c_size_t, c_int
@@ -378,14 +378,24 @@ class CryptoContext:
         
         return plaintext
 
-def generate_self_signed_cert():
-    """Generate self-signed certificate for testing"""
+def generate_self_signed_cert(ecdsa=True):
+    """Generate self-signed certificate for testing
+
+    Parameters
+    ----------
+    ecdsa : bool
+        If ``True`` generate an ECDSA certificate (P-256).  When ``False`` a
+        2048 bit RSA certificate is created.
+    """
     # Generate private key
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-        backend=default_backend()
-    )
+    if ecdsa:
+        private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+    else:
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+            backend=default_backend()
+        )
     
     # Generate certificate
     subject = issuer = x509.Name([
@@ -533,9 +543,15 @@ class TLSKeyExporter:
         # Export key material using PRF
         return prf(master_secret, label, seed, length)
 
+DEFAULT_CIPHERS = (
+    'ECDHE-ECDSA-AES128-SHA256:'
+    'ECDHE-ECDSA-AES128-CCM:'
+    'ECDHE-ECDSA-AES128-CCM8'
+)
+
 class EAPTLSHandler:
     """Complete EAP-TLS handler with RFC5216 compliant key derivation"""
-    def __init__(self, is_server=False, cert_file=None, key_file=None):
+    def __init__(self, is_server=False, cert_file=None, key_file=None, cipher_suites=None):
         self.is_server = is_server
         self.state = 'START'
         self.identifier = 0
@@ -549,7 +565,7 @@ class EAPTLSHandler:
         self.ssl_socket = None
         self.logger = logging.getLogger(f'EAP-TLS-{"Server" if is_server else "Client"}')
         
-        # Generate or load certificates
+        # Generate or load certificates (use ECDSA by default for modern cipher suites)
         if cert_file and key_file:
             with open(cert_file, 'rb') as f:
                 self.cert = x509.load_pem_x509_certificate(f.read(), default_backend())
@@ -557,7 +573,10 @@ class EAPTLSHandler:
                 self.private_key = serialization.load_pem_private_key(f.read(), None, default_backend())
         else:
             # Generate self-signed cert for testing
-            self.cert, self.private_key = generate_self_signed_cert()
+            self.cert, self.private_key = generate_self_signed_cert(ecdsa=True)
+
+        # Store cipher configuration
+        self.cipher_suites = cipher_suites or DEFAULT_CIPHERS
             
         # Create SSL context
         self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH if is_server else ssl.Purpose.SERVER_AUTH)
@@ -631,23 +650,31 @@ class EAPTLSHandler:
             # Server side TLS
             incoming = ssl.MemoryBIO()
             outgoing = ssl.MemoryBIO()
-            
+
             ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             ctx.load_cert_chain(self.temp_cert.name)
-            
-            sslobj = ctx.wrap_bio(incoming, outgoing, server_side=True)
         else:
             # Client side TLS
             incoming = ssl.MemoryBIO()
             outgoing = ssl.MemoryBIO()
-            
+
             ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-            
-            sslobj = ctx.wrap_bio(incoming, outgoing, server_side=False)
+
+        # Restrict to TLS 1.2 for interoperability
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+
+        # Configure cipher suites
+        try:
+            ctx.set_ciphers(self.cipher_suites)
+        except ssl.SSLError as e:
+            self.logger.warning(f"Failed to set ciphers '{self.cipher_suites}': {e}")
+
+        sslobj = ctx.wrap_bio(incoming, outgoing, server_side=self.is_server)
             
         return sslobj, incoming, outgoing
     
