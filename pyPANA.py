@@ -173,7 +173,7 @@ class PANAMessage:
         
     def pack(self):
         """Pack message into bytes (RFC5191 format)"""
-        # PANA Header is 16 bytes fixed
+        # PANA Header is 12 bytes (RFC5191)
         # First 16 bits: flags (high 6 bits) + reserved (low 10 bits)
         # Next 16 bits: message type
         header = struct.pack('!HHII', 
@@ -190,11 +190,11 @@ class PANAMessage:
     
     def unpack(self, data):
         """Unpack message from bytes (RFC5191 format)"""
-        if len(data) < 16:
+        if len(data) < 12:
             raise ValueError("Invalid PANA message length")
-            
-        (self.flags, self.msg_type, 
-         self.session_id, self.seq_number) = struct.unpack('!HHII', data[:16])
+
+        (self.flags, self.msg_type,
+         self.session_id, self.seq_number) = struct.unpack('!HHII', data[:12])
         
         # Validate message type
         valid_msg_types = [PANA_CLIENT_INITIATION, PANA_AUTH, PANA_TERMINATION, 
@@ -203,7 +203,7 @@ class PANAMessage:
             raise ValueError(f"Invalid PANA message type: {self.msg_type}")
         
         # Parse AVPs
-        offset = 16
+        offset = 12
         while offset < len(data):
             if offset + 8 > len(data):
                 raise ValueError("Incomplete AVP header")
@@ -939,6 +939,8 @@ class PANASession:
         self.lifetime = DEFAULT_SESSION_LIFETIME
         self.state = PAA_STATE_INITIAL  # RFC5191 state machine
         self.lock = threading.Lock()
+        self.radius_state = None
+        self.eap_identifier = 0
         
     def update_activity(self):
         """Update last activity timestamp"""
@@ -1429,9 +1431,13 @@ class PANAClient:
 
 class PANAAuthAgent:
     """PANA Authentication Agent (PAA) Implementation - RFC5191 Compliant"""
-    def __init__(self, bind_addr='0.0.0.0', bind_port=716):
+    def __init__(self, bind_addr='0.0.0.0', bind_port=716,
+                 radius_server=None, radius_port=1812, radius_secret=None):
         self.bind_addr = bind_addr
         self.bind_port = bind_port
+        self.radius_server = radius_server
+        self.radius_port = radius_port
+        self.radius_secret = radius_secret
         self.logger = logging.getLogger('PANA-AuthAgent')
         
         try:
@@ -1444,6 +1450,18 @@ class PANAAuthAgent:
         self.session_mgr = SessionManager()
         self.retransmit_mgr = RetransmissionManager(self.socket)
         self.running = True
+
+        self.radius_client = None
+        if self.radius_server:
+            try:
+                from pyrad.client import Client
+                from pyrad.dictionary import Dictionary
+                self.radius_client = Client(server=self.radius_server,
+                                           secret=(self.radius_secret or '').encode(),
+                                           dict=Dictionary())
+                self.radius_client.authport = self.radius_port
+            except Exception as e:
+                self.logger.error(f"Failed to initialize RADIUS client: {e}")
         
     def handle_pci(self, msg, addr):
         """Handle PANA-Client-Initiation"""
@@ -1452,7 +1470,10 @@ class PANAAuthAgent:
         # Create new session indexed by (session_id, client IP)
         key = (session_id, addr[0])
         session = self.session_mgr.create_session(key, addr)
-        session.eap_handler = EAPTLSHandler(is_server=True)
+        if self.radius_client is None:
+            session.eap_handler = EAPTLSHandler(is_server=True)
+        else:
+            session.eap_handler = None
         
         # Extract client nonce and algorithms
         for avp in msg.avps:
@@ -1471,7 +1492,11 @@ class PANAAuthAgent:
         auth_req.seq_number = session.seq_number
         
         # Create EAP-Request/Identity
-        eap_req = session.eap_handler.process_eap_message(b'')
+        if self.radius_client is None:
+            eap_req = session.eap_handler.process_eap_message(b'')
+        else:
+            eap_req = struct.pack('!BBH', EAP_REQUEST, session.eap_identifier, 5) + bytes([EAP_TYPE_IDENTITY])
+            session.eap_identifier += 1
         if eap_req:
             eap_avp = AVP(AVP_EAP_PAYLOAD, 0, eap_req)
             auth_req.avps.append(eap_avp)
@@ -1533,6 +1558,50 @@ class PANAAuthAgent:
                 self.logger.error("AUTH AVP verification failed")
                 return
                 
+        if eap_payload and self.radius_client:
+            # Forward EAP payload to RADIUS server
+            try:
+                req = self.radius_client.CreateAuthPacket(code=1)
+                req['NAS-Identifier'] = 'pyPANA'
+                req['EAP-Message'] = eap_payload
+                if session.radius_state:
+                    req['State'] = session.radius_state
+                reply = self.radius_client.SendPacket(req)
+                if 'State' in reply:
+                    session.radius_state = reply['State'][0]
+                eap_response = None
+                if 'EAP-Message' in reply:
+                    eap_response = reply['EAP-Message'][0]
+                radius_code = getattr(reply, 'code', None)
+            except Exception as e:
+                self.logger.error(f"RADIUS communication failed: {e}")
+                return
+
+            if eap_response:
+                auth_req = PANAMessage()
+                auth_req.flags = FLAG_REQUEST
+                auth_req.msg_type = PANA_AUTH
+                auth_req.session_id = session_id
+                auth_req.seq_number = session.seq_number
+                auth_req.avps.append(AVP(AVP_EAP_PAYLOAD, 0, eap_response))
+
+                if radius_code == 2:  # Access-Accept
+                    auth_req.flags |= FLAG_COMPLETE
+                    result_avp = AVP(AVP_RESULT_CODE, 0, struct.pack('!I', 2001))
+                    auth_req.avps.append(result_avp)
+                    session.state = PAA_STATE_WAIT_SUCC_PAN
+                elif radius_code == 3:  # Access-Reject
+                    auth_req.flags |= FLAG_COMPLETE
+                    result_avp = AVP(AVP_RESULT_CODE, 0, struct.pack('!I', 4001))
+                    auth_req.avps.append(result_avp)
+                    session.state = PAA_STATE_WAIT_FAIL_PAN
+
+                message_data = auth_req.pack()
+                self.socket.sendto(message_data, addr)
+                self.retransmit_mgr.add_message(session.seq_number, message_data, addr)
+                session.seq_number += 1
+            return
+
         if eap_payload:
             # Process EAP message
             eap_response = session.eap_handler.process_eap_message(eap_payload)

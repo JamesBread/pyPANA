@@ -26,6 +26,7 @@ PANA (Protocol for carrying Authentication for Network Access) is a UDP-based pr
 - **Session Management**: Lifetime management and re-authentication support
 - **Message Retransmission**: Reliable message delivery with R-bit support
 - **Comprehensive Error Handling**: Robust validation and error recovery
+- **RADIUS Backend**: Optional RADIUS authentication support via `pyrad`
 
 ## Requirements
 
@@ -34,6 +35,7 @@ PANA (Protocol for carrying Authentication for Network Access) is a UDP-based pr
 - Python packages:
   - cryptography
   - pyOpenSSL
+  - pyrad
 
 ## Installation
 
@@ -130,6 +132,16 @@ MAX_RETRANSMISSIONS = 3
 PRF_ALGORITHM = PRF_HMAC_SHA2_256
 AUTH_ALGORITHM = AUTH_HMAC_SHA2_256_128
 ENCR_ALGORITHM = AES128_CTR
+```
+
+### Enabling RADIUS Backend
+
+```python
+agent = PANAAuthAgent(
+    radius_server='192.168.1.50',
+    radius_port=1812,
+    radius_secret='shared'
+)
 ```
 
 ### Using with Certificates
