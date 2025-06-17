@@ -1,12 +1,30 @@
 #!/usr/bin/env python3
 """
 Simple test script for pyPANA implementation
-Tests basic message creation and parsing
+Tests basic message creation and parsing.
+
+Requirements: cryptography, pyOpenSSL
+Install with: ``pip install -r requirements.txt``
 """
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+missing = []
+try:
+    import cryptography
+except ImportError:
+    missing.append("cryptography")
+try:
+    from OpenSSL import crypto  # noqa: F401
+except ImportError:
+    missing.append("pyOpenSSL")
+
+if missing:
+    print("Skipping tests due to missing dependencies: {}".format(", ".join(missing)))
+    print("Install required packages with: pip install -r requirements.txt")
+    sys.exit(0)
 
 from pyPANA import (
     PANAMessage, AVP, CryptoContext,
