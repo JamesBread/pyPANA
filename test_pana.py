@@ -139,6 +139,48 @@ def test_encryption():
 
     print("✓ Encryption tests passed")
 
+def test_auth_verification_with_reserved():
+    """Test AUTH verification when reserved bits are set"""
+    print("\nTesting AUTH verification with reserved bits...")
+
+    ctx = CryptoContext()
+    ctx.pana_auth_key = b'A' * 32
+
+    msg = PANAMessage()
+    msg.flags = FLAG_REQUEST | FLAG_AUTH
+    msg.reserved = 0x0155
+    msg.msg_type = PANA_AUTH
+    msg.session_id = 0x1234
+    msg.seq_number = 1
+    msg.avps.append(AVP(AVP_EAP_PAYLOAD, 0, b'data'))
+
+    msg_no_auth = msg.pack()
+    auth_val = ctx.compute_auth(msg_no_auth)
+    msg.avps.append(AVP(AVP_AUTH, 0, auth_val))
+
+    packed = msg.pack()
+
+    parsed = PANAMessage()
+    parsed.unpack(packed)
+    assert parsed.reserved == msg.reserved
+
+    auth_value = None
+    msg_copy = PANAMessage()
+    msg_copy.reserved = parsed.reserved
+    msg_copy.flags = parsed.flags
+    msg_copy.msg_type = parsed.msg_type
+    msg_copy.session_id = parsed.session_id
+    msg_copy.seq_number = parsed.seq_number
+    for avp in parsed.avps:
+        if avp.code == AVP_AUTH:
+            auth_value = avp.value
+        else:
+            msg_copy.avps.append(avp)
+
+    assert auth_value is not None
+    assert ctx.verify_auth(msg_copy.pack(), auth_value)
+    print("✓ AUTH verification with reserved bits passed")
+
 def test_session_manager_indexing():
     """Test SessionManager indexing by session ID and IP"""
     print("\nTesting SessionManager indexing...")
@@ -169,6 +211,7 @@ def main():
         test_crypto_context()
         test_avp_handling()
         test_encryption()
+        test_auth_verification_with_reserved()
         test_session_manager_indexing()
         
         print("\n✅ All tests passed!")

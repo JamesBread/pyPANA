@@ -166,6 +166,7 @@ class PANAMessage:
         # RFC5191 Section 6.2: First 16 bits contain R,S,C,A,P,I flags + reserved
         # Next 16 bits contain Message Type
         self.flags = 0     # 16 bits (R,S,C,A,P,I flags in high 6 bits)
+        self.reserved = 0  # 10-bit reserved field
         self.msg_type = 0  # 16 bits
         self.session_id = 0  # 32 bits
         self.seq_number = 0  # 32 bits
@@ -176,8 +177,9 @@ class PANAMessage:
         # PANA Header is 12 bytes (RFC5191)
         # First 16 bits: flags (high 6 bits) + reserved (low 10 bits)
         # Next 16 bits: message type
-        header = struct.pack('!HHII', 
-                           self.flags,      # Flags + Reserved
+        header_flags = (self.flags & 0xFC00) | (self.reserved & 0x03FF)
+        header = struct.pack('!HHII',
+                           header_flags,   # Flags + Reserved
                            self.msg_type,   # Message Type
                            self.session_id,
                            self.seq_number)
@@ -193,8 +195,10 @@ class PANAMessage:
         if len(data) < 12:
             raise ValueError("Invalid PANA message length")
 
-        (self.flags, self.msg_type,
+        (flag_field, self.msg_type,
          self.session_id, self.seq_number) = struct.unpack('!HHII', data[:12])
+        self.flags = flag_field & 0xFC00
+        self.reserved = flag_field & 0x03FF
         
         # Validate message type
         valid_msg_types = [PANA_CLIENT_INITIATION, PANA_AUTH, PANA_TERMINATION, 
@@ -1139,6 +1143,7 @@ class PANAClient:
         if auth_avp and self.crypto_ctx.pana_auth_key:
             # Reconstruct message without AUTH AVP for verification
             msg_copy = PANAMessage()
+            msg_copy.reserved = msg.reserved
             msg_copy.flags = msg.flags
             msg_copy.msg_type = msg.msg_type
             msg_copy.session_id = msg.session_id
