@@ -27,6 +27,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from OpenSSL import SSL, crypto
 import ctypes
 from ctypes import c_void_p, c_char_p, c_size_t, c_int
+from pyrad.packet import AccessAccept, AccessReject, AccessChallenge
+from radius_client import RADIUSClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -906,6 +908,7 @@ class PANASession:
         self.addr = addr
         self.crypto_ctx = CryptoContext()
         self.eap_handler = None
+        self.radius_client = None
         self.seq_number = 0
         self.created_time = time.time()
         self.last_activity = time.time()
@@ -1391,9 +1394,13 @@ class PANAClient:
 
 class PANAAuthAgent:
     """PANA Authentication Agent (PAA) Implementation - RFC5191 Compliant"""
-    def __init__(self, bind_addr='0.0.0.0', bind_port=716):
+    def __init__(self, bind_addr='0.0.0.0', bind_port=716, *,
+                 radius_server=None, radius_secret='', radius_port=1812):
         self.bind_addr = bind_addr
         self.bind_port = bind_port
+        self.radius_server = radius_server
+        self.radius_secret = radius_secret
+        self.radius_port = radius_port
         self.logger = logging.getLogger('PANA-AuthAgent')
         
         try:
@@ -1413,7 +1420,12 @@ class PANAAuthAgent:
         
         # Create new session
         session = self.session_mgr.create_session(session_id, addr)
-        session.eap_handler = EAPTLSHandler(is_server=True)
+        session.eap_handler = None
+        session.radius_client = None
+        if self.radius_server:
+            session.radius_client = RADIUSClient(self.radius_server, self.radius_secret, self.radius_port)
+        else:
+            session.eap_handler = EAPTLSHandler(is_server=True)
         
         # Extract client nonce and algorithms
         for avp in msg.avps:
@@ -1432,7 +1444,10 @@ class PANAAuthAgent:
         auth_req.seq_number = session.seq_number
         
         # Create EAP-Request/Identity
-        eap_req = session.eap_handler.process_eap_message(b'')
+        if session.radius_client:
+            eap_req = struct.pack('!BBHB', EAP_REQUEST, 1, 5, EAP_TYPE_IDENTITY)
+        else:
+            eap_req = session.eap_handler.process_eap_message(b'')
         if eap_req:
             eap_avp = AVP(AVP_EAP_PAYLOAD, 0, eap_req)
             auth_req.avps.append(eap_avp)
@@ -1492,73 +1507,125 @@ class PANAAuthAgent:
                 
         if eap_payload:
             # Process EAP message
-            eap_response = session.eap_handler.process_eap_message(eap_payload)
-            
-            if eap_response:
-                # Check if authentication is complete
-                if session.eap_handler.state == 'COMPLETE':
-                    # Get MSK and derive keys
-                    msk = session.eap_handler.get_msk()
-                    emsk = session.eap_handler.get_emsk()
-                    if msk:
-                        session.crypto_ctx.session_id = session_id  # Pass session_id for key derivation
-                        session.crypto_ctx.derive_keys(msk, emsk)
-                        
-                    # Send final PANA-Auth-Request with EAP-Success
+            if session.radius_client:
+                code, eap_response = session.radius_client.send_eap(eap_payload)
+                if code == AccessAccept:
+                    eap_response = eap_response or struct.pack('!BBH', EAP_SUCCESS, msg.seq_number & 0xff, 4)
                     final_req = PANAMessage()
-                    final_req.flags = FLAG_REQUEST | FLAG_COMPLETE | FLAG_AUTH
+                    final_req.flags = FLAG_REQUEST | FLAG_COMPLETE
                     final_req.msg_type = PANA_AUTH
                     final_req.session_id = session_id
                     final_req.seq_number = session.seq_number
-                    
-                    # Add EAP Success
+
                     eap_avp = AVP(AVP_EAP_PAYLOAD, 0, eap_response)
                     final_req.avps.append(eap_avp)
-                    
-                    # Add Result-Code AVP (Success)
-                    result_avp = AVP(AVP_RESULT_CODE, 0, struct.pack('!I', 2001))  # Success
+
+                    result_avp = AVP(AVP_RESULT_CODE, 0, struct.pack('!I', 2001))
                     final_req.avps.append(result_avp)
-                    
-                    # Add Session-Lifetime AVP
+
                     lifetime_avp = AVP(AVP_SESSION_LIFETIME, 0, struct.pack('!I', session.lifetime))
                     final_req.avps.append(lifetime_avp)
-                    
-                    # Add Key-ID AVP
-                    if session.crypto_ctx.key_id:
-                        key_avp = AVP(AVP_KEY_ID, 0, session.crypto_ctx.key_id)
-                        final_req.avps.append(key_avp)
-                    
-                    # Add AUTH AVP
-                    msg_without_auth = final_req.pack()
-                    auth_value = session.crypto_ctx.compute_auth(msg_without_auth)
-                    auth_avp = AVP(AVP_AUTH, 0, auth_value)
-                    final_req.avps.append(auth_avp)
-                    
+
                     message_data = final_req.pack()
                     self.socket.sendto(message_data, addr)
                     self.retransmit_mgr.add_message(session.seq_number, message_data, addr)
                     session.seq_number += 1
-                    
-                    # Update state to WAIT_SUCC_PAN
                     session.state = PAA_STATE_WAIT_SUCC_PAN
                     self.logger.info(f"State transition: {PAA_STATE_WAIT_EAP_MSG} -> {PAA_STATE_WAIT_SUCC_PAN}")
-                    self.logger.info(f"Authentication successful for session {session_id:08x}")
-                else:
-                    # Continue EAP exchange
+                elif code == AccessReject:
+                    fail = struct.pack('!BBH', EAP_FAILURE, msg.seq_number & 0xff, 4)
+                    final_req = PANAMessage()
+                    final_req.flags = FLAG_REQUEST | FLAG_COMPLETE
+                    final_req.msg_type = PANA_AUTH
+                    final_req.session_id = session_id
+                    final_req.seq_number = session.seq_number
+                    final_req.avps.append(AVP(AVP_EAP_PAYLOAD, 0, fail))
+                    final_req.avps.append(AVP(AVP_RESULT_CODE, 0, struct.pack('!I', 4001)))
+                    message_data = final_req.pack()
+                    self.socket.sendto(message_data, addr)
+                    self.retransmit_mgr.add_message(session.seq_number, message_data, addr)
+                    session.seq_number += 1
+                    session.state = PAA_STATE_WAIT_FAIL_PAN
+                else:  # Access-Challenge
                     auth_req = PANAMessage()
                     auth_req.flags = FLAG_REQUEST
                     auth_req.msg_type = PANA_AUTH
                     auth_req.session_id = session_id
                     auth_req.seq_number = session.seq_number
-                    
-                    # Add EAP payload
-                    eap_avp = AVP(AVP_EAP_PAYLOAD, 0, eap_response)
-                    auth_req.avps.append(eap_avp)
-                    
+                    if eap_response:
+                        auth_req.avps.append(AVP(AVP_EAP_PAYLOAD, 0, eap_response))
                     message_data = auth_req.pack()
                     self.socket.sendto(message_data, addr)
                     self.retransmit_mgr.add_message(session.seq_number, message_data, addr)
                     session.seq_number += 1
+            else:
+                eap_response = session.eap_handler.process_eap_message(eap_payload)
+
+                if eap_response:
+                    # Check if authentication is complete
+                    if session.eap_handler.state == 'COMPLETE':
+                        # Get MSK and derive keys
+                        msk = session.eap_handler.get_msk()
+                        emsk = session.eap_handler.get_emsk()
+                        if msk:
+                            session.crypto_ctx.session_id = session_id  # Pass session_id for key derivation
+                            session.crypto_ctx.derive_keys(msk, emsk)
+
+                        # Send final PANA-Auth-Request with EAP-Success
+                        final_req = PANAMessage()
+                        final_req.flags = FLAG_REQUEST | FLAG_COMPLETE | FLAG_AUTH
+                        final_req.msg_type = PANA_AUTH
+                        final_req.session_id = session_id
+                        final_req.seq_number = session.seq_number
+
+                        # Add EAP Success
+                        eap_avp = AVP(AVP_EAP_PAYLOAD, 0, eap_response)
+                        final_req.avps.append(eap_avp)
+
+                        # Add Result-Code AVP (Success)
+                        result_avp = AVP(AVP_RESULT_CODE, 0, struct.pack('!I', 2001))  # Success
+                        final_req.avps.append(result_avp)
+
+                        # Add Session-Lifetime AVP
+                        lifetime_avp = AVP(AVP_SESSION_LIFETIME, 0, struct.pack('!I', session.lifetime))
+                        final_req.avps.append(lifetime_avp)
+
+                        # Add Key-ID AVP
+                        if session.crypto_ctx.key_id:
+                            key_avp = AVP(AVP_KEY_ID, 0, session.crypto_ctx.key_id)
+                            final_req.avps.append(key_avp)
+
+                        # Add AUTH AVP
+                        msg_without_auth = final_req.pack()
+                        auth_value = session.crypto_ctx.compute_auth(msg_without_auth)
+                        auth_avp = AVP(AVP_AUTH, 0, auth_value)
+                        final_req.avps.append(auth_avp)
+
+                        message_data = final_req.pack()
+                        self.socket.sendto(message_data, addr)
+                        self.retransmit_mgr.add_message(session.seq_number, message_data, addr)
+                        session.seq_number += 1
+
+                        # Update state to WAIT_SUCC_PAN
+                        session.state = PAA_STATE_WAIT_SUCC_PAN
+                        self.logger.info(f"State transition: {PAA_STATE_WAIT_EAP_MSG} -> {PAA_STATE_WAIT_SUCC_PAN}")
+                        self.logger.info(f"Authentication successful for session {session_id:08x}")
+                    else:
+                        # Continue EAP exchange
+                        auth_req = PANAMessage()
+                        auth_req.flags = FLAG_REQUEST
+                        auth_req.msg_type = PANA_AUTH
+                        auth_req.session_id = session_id
+                        auth_req.seq_number = session.seq_number
+
+                        # Add EAP payload
+                        eap_avp = AVP(AVP_EAP_PAYLOAD, 0, eap_response)
+                        auth_req.avps.append(eap_avp)
+
+                        message_data = auth_req.pack()
+                        self.socket.sendto(message_data, addr)
+                        self.retransmit_mgr.add_message(session.seq_number, message_data, addr)
+                        session.seq_number += 1
                     
         elif msg.flags & FLAG_COMPLETE:
             # Client acknowledged final auth message

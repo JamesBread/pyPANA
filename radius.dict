@@ -1,0 +1,5 @@
+ATTRIBUTE EAP-Message 79 string
+ATTRIBUTE Message-Authenticator 80 octets
+ATTRIBUTE State 24 string
+ATTRIBUTE User-Name 1 string
+ATTRIBUTE NAS-Identifier 32 string
