@@ -1091,6 +1091,8 @@ class PANAClient:
         
     def handle_auth_msg(self, msg):
         """Handle PANA-Auth message (Request or Answer)"""
+        self.logger.debug(f"handle_auth_msg: Received {'request' if msg.is_request() else 'answer'} in state {self.state}")
+        
         # Validate state
         if self.state not in [PAC_STATE_WAIT_PAN_OR_PAR, PAC_STATE_WAIT_EAP_MSG, 
                              PAC_STATE_WAIT_EAP_RESULT, PAC_STATE_OPEN]:
@@ -1194,6 +1196,8 @@ class PANAClient:
                 self.logger.error(f"Authentication failed with result code: {result_code}")
                 
         elif eap_payload:
+            self.logger.debug(f"Processing EAP payload of {len(eap_payload)} bytes")
+            
             # Update state for EAP processing
             if self.state == PAC_STATE_WAIT_PAN_OR_PAR:
                 self.state = PAC_STATE_WAIT_EAP_MSG
@@ -1201,13 +1205,12 @@ class PANAClient:
             
             # Process EAP message
             eap_response = self.eap_handler.process_eap_message(eap_payload)
+            self.logger.debug(f"EAP response: {eap_response.hex() if eap_response else 'None'}")
             
             if eap_response:
                 # Send PANA-Auth with EAP response
                 answer = PANAMessage()
                 answer.flags = 0  # Answer, no special flags
-                if msg.is_request():
-                    answer.flags = FLAG_REQUEST
                 answer.msg_type = PANA_AUTH
                 answer.session_id = msg.session_id
                 answer.seq_number = self.seq_number
@@ -1232,6 +1235,7 @@ class PANAClient:
                         answer.avps.append(auth_avp)
                 
                 message_data = answer.pack()
+                self.logger.debug(f"Sending PAN with seq_number {self.seq_number}, flags {answer.flags}, {len(message_data)} bytes")
                 self.socket.sendto(message_data, (self.server_addr, self.server_port))
                 if answer.is_request():
                     self.retransmit_mgr.add_message(self.seq_number, message_data, (self.server_addr, self.server_port))
