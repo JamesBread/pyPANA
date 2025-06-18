@@ -1039,6 +1039,11 @@ class PANAClient:
         self.server_addr = server_addr
         self.server_port = server_port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Bind to any available port for client
+        self.socket.bind(('', 0))
+        local_addr, local_port = self.socket.getsockname()
+        self.logger = logging.getLogger('PANA-Client')
+        self.logger.info(f"Client socket bound to {local_addr}:{local_port}")
         self.session_id = struct.unpack('!I', os.urandom(4))[0]
         self.seq_number = 0
         self.crypto_ctx = CryptoContext()
@@ -1048,7 +1053,6 @@ class PANAClient:
         self.session_lifetime = DEFAULT_SESSION_LIFETIME
         self.session_start_time = None
         self.state = PAC_STATE_INITIAL  # RFC5191 state machine
-        self.logger = logging.getLogger('PANA-Client')
         
     def generate_nonce(self):
         """Generate random nonce"""
@@ -1374,14 +1378,17 @@ class PANAClient:
                     continue
                     
                 data, addr = self.socket.recvfrom(4096)
+                self.logger.debug(f"Received {len(data)} bytes from {addr}")
                 if not data:
                     continue
                     
                 msg = PANAMessage()
                 try:
                     msg.unpack(data)
+                    self.logger.debug(f"Successfully parsed message: type={msg.msg_type}, flags=0x{msg.flags:04x}, seq={msg.seq_number}")
                 except ValueError as e:
                     self.logger.error(f"Failed to parse PANA message: {e}")
+                    self.logger.debug(f"Raw data: {data.hex()}")
                     continue
                 
                 self.logger.info(f"Received message: type={msg.msg_type}, flags=0x{msg.flags:04x}, seq={msg.seq_number}")
@@ -1877,14 +1884,25 @@ if __name__ == "__main__":
         
     signal.signal(signal.SIGINT, signal_handler)
     
+    # Configure logging
+    log_level = logging.INFO
+    if '--debug' in sys.argv:
+        log_level = logging.DEBUG
+        sys.argv.remove('--debug')
+    
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
     if len(sys.argv) < 2:
         print("RFC5191 PANA Implementation")
         print("===========================")
-        print("Usage: python pyPANA.py [paa|pac] [server_addr]")
+        print("Usage: python pyPANA.py [paa|pac] [server_addr] [--debug]")
         print("")
         print("Modes:")
-        print("  paa         - Run as PANA Authentication Agent (server)")
-        print("  pac <addr>  - Run as PANA Client (connect to server)")
+        print("  paa [--debug]        - Run as PANA Authentication Agent (server)")
+        print("  pac <addr> [--debug] - Run as PANA Client (connect to server)")
         print("")
         print("Example:")
         print("  Terminal 1: python pyPANA.py paa")
