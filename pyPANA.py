@@ -22,7 +22,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography import x509
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 from OpenSSL import SSL, crypto
 import ctypes
@@ -424,8 +424,8 @@ def generate_self_signed_cert(ecdsa=True):
         datetime.utcnow() + timedelta(days=365)
     ).add_extension(
         x509.ExtendedKeyUsage([
-            x509.oid.ExtensionOID.SERVER_AUTH,
-            x509.oid.ExtensionOID.CLIENT_AUTH,
+            ExtendedKeyUsageOID.SERVER_AUTH,
+            ExtendedKeyUsageOID.CLIENT_AUTH,
         ]),
         critical=True,
     ).sign(private_key, hashes.SHA256(), default_backend())
