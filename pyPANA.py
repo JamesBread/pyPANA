@@ -1095,6 +1095,7 @@ class PANAClient:
         
     def handle_auth_msg(self, msg):
         """Handle PANA-Auth message (Request or Answer)"""
+        self.logger.info(f"handle_auth_msg: Received {'request' if msg.is_request() else 'answer'} in state {self.state}")
         self.logger.debug(f"handle_auth_msg: Received {'request' if msg.is_request() else 'answer'} in state {self.state}")
         
         # Validate state
@@ -1388,6 +1389,7 @@ class PANAClient:
                     continue
                     
                 data, addr = self.socket.recvfrom(4096)
+                self.logger.info(f"Received {len(data)} bytes from {addr}")
                 self.logger.debug(f"Received {len(data)} bytes from {addr}")
                 if not data:
                     continue
