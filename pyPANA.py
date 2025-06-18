@@ -1115,6 +1115,7 @@ class PANAClient:
         auth_avp = None
         key_id = None
         
+        self.logger.debug(f"Message has {len(msg.avps)} AVPs")
         for avp in msg.avps:
             if avp.code == AVP_EAP_PAYLOAD:
                 eap_payload = avp.value
@@ -1144,6 +1145,11 @@ class PANAClient:
             
         # Pass session_id to crypto context for key derivation
         self.crypto_ctx.session_id = msg.session_id
+        
+        # Debug log extracted AVPs
+        self.logger.debug(f"Extracted AVPs: eap_payload={'present' if eap_payload else 'none'}, "
+                         f"nonce_paa={'present' if nonce_paa else 'none'}, "
+                         f"session_lifetime={session_lifetime}, result_code={result_code}")
             
         # Verify AUTH AVP if present and we have keys
         if auth_avp and self.crypto_ctx.pana_auth_key:
@@ -1244,6 +1250,10 @@ class PANAClient:
                 if answer.is_request():
                     self.retransmit_mgr.add_message(self.seq_number, message_data, (self.server_addr, self.server_port))
                 self.seq_number += 1
+            else:
+                self.logger.warning("No EAP response generated")
+        else:
+            self.logger.debug("No EAP payload and not a complete message - no action taken")
                 
     def _start_session_monitoring(self):
         """Start monitoring session lifetime"""
