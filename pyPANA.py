@@ -16,7 +16,7 @@ import ssl
 import select
 import logging
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
@@ -419,9 +419,9 @@ def generate_self_signed_cert(ecdsa=True):
     ).serial_number(
         x509.random_serial_number()
     ).not_valid_before(
-        datetime.utcnow()
+        datetime.now(timezone.utc)
     ).not_valid_after(
-        datetime.utcnow() + timedelta(days=365)
+        datetime.now(timezone.utc) + timedelta(days=365)
     ).add_extension(
         x509.ExtendedKeyUsage([
             ExtendedKeyUsageOID.SERVER_AUTH,
