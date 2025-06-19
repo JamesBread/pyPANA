@@ -32,7 +32,7 @@ from pyPANA import (
     PANA_CLIENT_INITIATION, PANA_AUTH,
     AVP_NONCE, AVP_AUTH, AVP_EAP_PAYLOAD,
     PRF_HMAC_SHA2_256, AUTH_HMAC_SHA2_256_128,
-    EAPTLSHandler, EAP_REQUEST
+    EAPTLSHandler, EAP_REQUEST, EAP_RESPONSE, EAP_TYPE_TLS
 )
 import struct
 
@@ -211,6 +211,46 @@ def test_eaptls_server_start():
     assert code == EAP_REQUEST
     assert ident == 1
 
+def test_eaptls_client_final_fragment():
+    """Ensure client sends final TLS fragment before waiting for Success"""
+
+    class DummyBIO:
+        def __init__(self, data=b''):
+            self._data = data
+        def read(self):
+            data = self._data
+            self._data = b''
+            return data
+        def write(self, data):
+            pass
+
+    class DummySSL:
+        def __init__(self):
+            pass
+        def do_handshake(self):
+            pass
+        def cipher(self):
+            return ("TLS_AES_128_GCM_SHA256", "TLSv1.2", 128)
+        def export_keying_material(self, label, length, context):
+            return b"\x00" * length
+
+    client = EAPTLSHandler(is_server=False)
+    client.state = 'TLS_HANDSHAKE'
+    client._derive_msk_emsk = lambda: None
+    client.sslobj = DummySSL()
+    client.incoming = DummyBIO()
+    client.outgoing = DummyBIO(b'finaltls')
+
+    # Server sends final TLS fragment
+    fragment = struct.pack('!BBHBB', EAP_REQUEST, 1, 7, EAP_TYPE_TLS, 0) + b'X'
+    resp = client.process_eap_message(fragment)
+
+    assert resp is not None
+    code, ident, length = struct.unpack('!BBH', resp[:4])
+    assert code == EAP_RESPONSE
+    assert resp[4] == EAP_TYPE_TLS
+    assert resp.endswith(b'finaltls')
+
 def main():
     """Run all tests"""
     print("pyPANA Basic Tests")
@@ -224,7 +264,8 @@ def main():
         test_auth_verification_with_reserved()
         test_session_manager_indexing()
         test_eaptls_server_start()
-        
+        test_eaptls_client_final_fragment()
+
         print("\n✅ All tests passed!")
         
     except AssertionError as e:
