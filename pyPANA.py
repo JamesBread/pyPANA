@@ -828,7 +828,7 @@ class EAPTLSHandler:
                         flags = 0
                         if self.current_fragment_index < len(self.sent_fragments) - 1:
                             flags |= EAP_TLS_FLAG_MORE
-                        
+
                         return self._create_eap_tls_packet(
                             EAP_RESPONSE if code == EAP_REQUEST else EAP_REQUEST,
                             identifier,
@@ -839,7 +839,7 @@ class EAPTLSHandler:
                         # All fragments sent, clear buffer
                         self.sent_fragments = []
                         self.current_fragment_index = 0
-                        return None
+                        # Continue to handshake completion check below
                 
                 # Handle incoming fragments
                 if flags & EAP_TLS_FLAG_MORE or self.expecting_more_fragments:
@@ -877,39 +877,39 @@ class EAPTLSHandler:
                 except ssl.SSLError as e:
                     self.logger.error(f"TLS handshake error: {e}")
                     return None
-                    
-                # Check if handshake is complete
+
+                # Always read pending TLS data after handshake attempt
+                response_data = self.outgoing.read()
+                if response_data:
+                    self.tls_data = response_data
+                    self.sent_fragments = self._fragment_tls_data(response_data)
+                    self.current_fragment_index = 0
+
+                    # Send first fragment
+                    flags = 0
+                    if len(self.sent_fragments) > 1:
+                        flags |= EAP_TLS_FLAG_MORE | EAP_TLS_FLAG_LENGTH
+
+                    return self._create_eap_tls_packet(
+                        EAP_RESPONSE if code == EAP_REQUEST else EAP_REQUEST,
+                        identifier,
+                        flags,
+                        self.sent_fragments[0]
+                    )
+
+                # No data to send, check if handshake is complete
                 if hasattr(self.sslobj, 'cipher') and self.sslobj.cipher():
                     # Handshake complete, derive MSK/EMSK
                     self.state = 'COMPLETE'
                     self.ssl_socket = self.sslobj  # Save for key export
                     self._derive_msk_emsk()
-                    
+
                     if self.is_server:
                         # Send EAP Success
                         return struct.pack('!BBH', EAP_SUCCESS, identifier + 1, 4)
                     else:
                         # Client waits for EAP Success
                         return None
-                else:
-                    # Continue handshake
-                    response_data = self.outgoing.read()
-                    if response_data:
-                        self.tls_data = response_data
-                        self.sent_fragments = self._fragment_tls_data(response_data)
-                        self.current_fragment_index = 0
-                        
-                        # Send first fragment
-                        flags = 0
-                        if len(self.sent_fragments) > 1:
-                            flags |= EAP_TLS_FLAG_MORE | EAP_TLS_FLAG_LENGTH
-                            
-                        return self._create_eap_tls_packet(
-                            EAP_RESPONSE if code == EAP_REQUEST else EAP_REQUEST,
-                            identifier,
-                            flags,
-                            self.sent_fragments[0]
-                        )
                         
         elif self.state == 'COMPLETE' and not self.is_server:
             if code == EAP_SUCCESS:
