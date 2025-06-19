@@ -897,7 +897,7 @@ class EAPTLSHandler:
                         self.sent_fragments[0]
                     )
 
-                # No data to send, check if handshake is complete
+                # No data to send
                 if hasattr(self.sslobj, 'cipher') and self.sslobj.cipher():
                     # Handshake complete, derive MSK/EMSK
                     self.state = 'COMPLETE'
@@ -910,6 +910,13 @@ class EAPTLSHandler:
                     else:
                         # Client waits for EAP Success
                         return None
+
+                # Handshake still in progress but no TLS data to send
+                return self._create_eap_tls_packet(
+                    EAP_RESPONSE if code == EAP_REQUEST else EAP_REQUEST,
+                    identifier,
+                    0
+                )
                         
         elif self.state == 'COMPLETE' and not self.is_server:
             if code == EAP_SUCCESS:
@@ -1182,8 +1189,9 @@ class PANAClient:
             if result_code == 2001:  # Success
                 self.logger.info("PANA authentication successful")
                 self.session_start_time = time.time()
+                prev_state = self.state
                 self.state = PAC_STATE_OPEN
-                self.logger.info(f"State transition: {self.state} -> {PAC_STATE_OPEN}")
+                self.logger.info(f"State transition: {prev_state} -> {PAC_STATE_OPEN}")
                 
                 # Send final answer if this was a request
                 if msg.is_request():
