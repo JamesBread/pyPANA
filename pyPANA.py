@@ -1228,6 +1228,7 @@ class PANAClient:
                 
                 # Send final answer if this was a request
                 if msg.is_request():
+                    self.logger.info("Sending final PANA-Auth-Answer")
                     answer = PANAMessage()
                     answer.flags = FLAG_COMPLETE | FLAG_AUTH
                     answer.msg_type = PANA_AUTH
@@ -1245,8 +1246,11 @@ class PANAClient:
                     answer.avps.append(auth_avp)
                     
                     message_data = answer.pack()
+                    self.logger.info(f"Sending final answer: seq={self.seq_number}, size={len(message_data)}")
                     self.socket.sendto(message_data, (self.server_addr, self.server_port))
                     self.seq_number += 1
+                else:
+                    self.logger.info("Final message was not a request, not sending answer")
                     
                 # Start session lifetime monitoring
                 self._start_session_monitoring()
