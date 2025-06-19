@@ -316,6 +316,7 @@ class CryptoContext:
         logger.info(f"  nonce_paa: {(self.nonce_paa or b'').hex()}")
         logger.info(f"  key_id: {self.key_id.hex()}")
         logger.info(f"  MSK length: {len(msk)}")
+        logger.info(f"  MSK: {msk.hex()}")
         
         # Use HKDF as PRF+ implementation
         hkdf = HKDF(
