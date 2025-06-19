@@ -306,6 +306,16 @@ class CryptoContext:
         # For simplicity, using nonces as PSA values
         prf_input = b"IETF PANA" + (self.nonce_pac or b'') + (self.nonce_paa or b'') + session_id_bytes + self.key_id
         
+        # Debug log
+        import logging
+        logger = logging.getLogger('CryptoContext')
+        logger.debug(f"Key derivation parameters:")
+        logger.debug(f"  session_id: {self.session_id:08x}")
+        logger.debug(f"  nonce_pac: {(self.nonce_pac or b'').hex()}")
+        logger.debug(f"  nonce_paa: {(self.nonce_paa or b'').hex()}")
+        logger.debug(f"  key_id: {self.key_id.hex()}")
+        logger.debug(f"  MSK length: {len(msk)}")
+        
         # Use HKDF as PRF+ implementation
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
@@ -316,6 +326,7 @@ class CryptoContext:
         )
         
         self.pana_auth_key = hkdf.derive(msk[:32])  # Use first 32 bytes of MSK
+        logger.debug(f"  PANA_AUTH_KEY: {self.pana_auth_key.hex()[:32]}...")
         
         # Derive encryption key if needed (not in RFC5191 base, but for our AES support)
         hkdf_encr = HKDF(
@@ -339,7 +350,17 @@ class CryptoContext:
     def verify_auth(self, message_data, auth_value):
         """Verify AUTH AVP value"""
         computed = self.compute_auth(message_data)
-        return hmac.compare_digest(computed, auth_value)
+        result = hmac.compare_digest(computed, auth_value)
+        
+        # Debug log
+        import logging
+        logger = logging.getLogger('CryptoContext')
+        logger.debug(f"AUTH verification:")
+        logger.debug(f"  computed: {computed.hex()}")
+        logger.debug(f"  received: {auth_value.hex()}")
+        logger.debug(f"  result: {result}")
+        
+        return result
     
     def encrypt(self, plaintext):
         """Encrypt data using AES-128-CTR"""
