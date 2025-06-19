@@ -309,12 +309,12 @@ class CryptoContext:
         # Debug log
         import logging
         logger = logging.getLogger('CryptoContext')
-        logger.debug(f"Key derivation parameters:")
-        logger.debug(f"  session_id: {self.session_id:08x}")
-        logger.debug(f"  nonce_pac: {(self.nonce_pac or b'').hex()}")
-        logger.debug(f"  nonce_paa: {(self.nonce_paa or b'').hex()}")
-        logger.debug(f"  key_id: {self.key_id.hex()}")
-        logger.debug(f"  MSK length: {len(msk)}")
+        logger.info(f"Key derivation parameters:")
+        logger.info(f"  session_id: {self.session_id:08x}")
+        logger.info(f"  nonce_pac: {(self.nonce_pac or b'').hex()}")
+        logger.info(f"  nonce_paa: {(self.nonce_paa or b'').hex()}")
+        logger.info(f"  key_id: {self.key_id.hex()}")
+        logger.info(f"  MSK length: {len(msk)}")
         
         # Use HKDF as PRF+ implementation
         hkdf = HKDF(
@@ -326,7 +326,7 @@ class CryptoContext:
         )
         
         self.pana_auth_key = hkdf.derive(msk[:32])  # Use first 32 bytes of MSK
-        logger.debug(f"  PANA_AUTH_KEY: {self.pana_auth_key.hex()[:32]}...")
+        logger.info(f"  PANA_AUTH_KEY: {self.pana_auth_key.hex()[:32]}...")
         
         # Derive encryption key if needed (not in RFC5191 base, but for our AES support)
         hkdf_encr = HKDF(
@@ -355,10 +355,10 @@ class CryptoContext:
         # Debug log
         import logging
         logger = logging.getLogger('CryptoContext')
-        logger.debug(f"AUTH verification:")
-        logger.debug(f"  computed: {computed.hex()}")
-        logger.debug(f"  received: {auth_value.hex()}")
-        logger.debug(f"  result: {result}")
+        logger.info(f"AUTH verification:")
+        logger.info(f"  computed: {computed.hex()}")
+        logger.info(f"  received: {auth_value.hex()}")
+        logger.info(f"  result: {result}")
         
         return result
     
