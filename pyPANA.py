@@ -291,8 +291,9 @@ class CryptoContext:
         self.msk = msk
         self.emsk = emsk
         
-        # Generate Key_ID
-        self.key_id = os.urandom(4)
+        # Generate Key_ID only if not already set (PaC receives it from PAA)
+        if not self.key_id:
+            self.key_id = os.urandom(4)
         
         # Derive PANA_AUTH_KEY (RFC5191 Section 5.3)
         # PANA_AUTH_KEY = prf+(MSK, "IETF PANA" | PSA(PaC) | PSA(PAA) | Session_ID | Key_ID)
