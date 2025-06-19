@@ -736,6 +736,11 @@ class EAPTLSHandler:
     def process_eap_message(self, eap_data):
         """Process EAP message and return response"""
         if len(eap_data) < 4:
+            if self.state == 'START' and self.is_server:
+                # Server begins exchange by sending Identity request
+                request = struct.pack('!BBH', EAP_REQUEST, 1, 5) + bytes([EAP_TYPE_IDENTITY])
+                self.state = 'IDENTITY_REQUESTED'
+                return request
             return None
             
         code, identifier, length = struct.unpack('!BBH', eap_data[:4])

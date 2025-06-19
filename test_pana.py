@@ -31,7 +31,8 @@ from pyPANA import (
     FLAG_REQUEST, FLAG_START, FLAG_AUTH,
     PANA_CLIENT_INITIATION, PANA_AUTH,
     AVP_NONCE, AVP_AUTH, AVP_EAP_PAYLOAD,
-    PRF_HMAC_SHA2_256, AUTH_HMAC_SHA2_256_128
+    PRF_HMAC_SHA2_256, AUTH_HMAC_SHA2_256_128,
+    EAPTLSHandler, EAP_REQUEST
 )
 import struct
 
@@ -201,6 +202,15 @@ def test_session_manager_indexing():
 
     mgr.remove_session(key)
 
+def test_eaptls_server_start():
+    """Ensure server-side EAP handler sends Identity request with no input"""
+    handler = EAPTLSHandler(is_server=True)
+    req = handler.process_eap_message(b"")
+    assert req is not None
+    code, ident, length = struct.unpack('!BBH', req[:4])
+    assert code == EAP_REQUEST
+    assert ident == 1
+
 def main():
     """Run all tests"""
     print("pyPANA Basic Tests")
@@ -213,6 +223,7 @@ def main():
         test_encryption()
         test_auth_verification_with_reserved()
         test_session_manager_indexing()
+        test_eaptls_server_start()
         
         print("\n✅ All tests passed!")
         
