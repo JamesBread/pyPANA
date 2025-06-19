@@ -1213,6 +1213,19 @@ class PANAClient:
                 self.state = PAC_STATE_OPEN
                 self.logger.info(f"State transition: {prev_state} -> {PAC_STATE_OPEN}")
                 
+                # Process EAP-Success message if present to get MSK
+                if eap_payload and len(eap_payload) >= 4:
+                    # Process the EAP message (which should be EAP-Success)
+                    self.eap_handler.process_eap_message(eap_payload)
+                    
+                    # Now derive keys from EAP MSK
+                    msk = self.eap_handler.get_msk()
+                    emsk = self.eap_handler.get_emsk()
+                    if msk:
+                        self.crypto_ctx.session_id = msg.session_id
+                        self.crypto_ctx.derive_keys(msk, emsk)
+                        self.logger.info("Derived PANA keys from EAP MSK")
+                
                 # Send final answer if this was a request
                 if msg.is_request():
                     answer = PANAMessage()
