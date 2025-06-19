@@ -897,18 +897,21 @@ class EAPTLSHandler:
                         self.sent_fragments[0]
                     )
 
-                # No data to send
+                # Check if handshake is complete but don't immediately go to COMPLETE state
                 if hasattr(self.sslobj, 'cipher') and self.sslobj.cipher():
                     # Handshake complete, derive MSK/EMSK
-                    self.state = 'COMPLETE'
-                    self.ssl_socket = self.sslobj  # Save for key export
-                    self._derive_msk_emsk()
+                    if self.state != 'COMPLETE':  # Only do this once
+                        self.ssl_socket = self.sslobj  # Save for key export
+                        self._derive_msk_emsk()
+                        self.logger.info("TLS handshake completed, keys derived")
 
                     if self.is_server:
-                        # Send EAP Success
+                        # Send EAP Success and mark as complete
+                        self.state = 'COMPLETE'
                         return struct.pack('!BBH', EAP_SUCCESS, identifier + 1, 4)
                     else:
-                        # Client waits for EAP Success
+                        # Client waits for EAP Success before marking complete
+                        # Don't set state to COMPLETE yet
                         return None
 
                 # Handshake still in progress but no TLS data to send
@@ -918,11 +921,23 @@ class EAPTLSHandler:
                     0
                 )
                         
+        elif not self.is_server and code == EAP_SUCCESS:
+            # Client received EAP Success - now we can mark as complete
+            self.state = 'COMPLETE'
+            self.logger.info("EAP-TLS authentication successful")
+            return None
+            
         elif self.state == 'COMPLETE' and not self.is_server:
-            if code == EAP_SUCCESS:
-                # Authentication successful
-                self.logger.info("EAP-TLS authentication successful")
+            if code == EAP_REQUEST:
+                # Server is sending new EAP request after completion - this shouldn't happen normally
+                # but handle gracefully by returning None to avoid infinite loops
+                self.logger.warning("Received EAP request after completion")
                 return None
+                
+        # If we get here and state is COMPLETE, it means we received an unexpected message
+        if self.state == 'COMPLETE':
+            self.logger.warning(f"Received EAP message in COMPLETE state: code={code}, id={identifier}")
+            return None
                 
         return None
     
