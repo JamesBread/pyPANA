@@ -912,7 +912,12 @@ class EAPTLSHandler:
                     else:
                         # Client waits for EAP Success before marking complete
                         # Don't set state to COMPLETE yet
-                        return None
+                        # Send empty EAP-TLS response to acknowledge server's data
+                        return self._create_eap_tls_packet(
+                            EAP_RESPONSE,
+                            identifier,
+                            0  # No flags, empty data
+                        )
 
                 # Handshake still in progress but no TLS data to send
                 return self._create_eap_tls_packet(
