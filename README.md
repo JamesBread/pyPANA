@@ -35,7 +35,11 @@ PANA (Protocol for carrying Authentication for Network Access) is a UDP-based pr
 - Python packages:
   - cryptography
   - pyOpenSSL
-  - pyrad
+  - pyrad (optional, for RADIUS backend)
+
+**For RADIUS integration (optional):**
+- FreeRADIUS server (or any RADIUS server)
+- Network access to RADIUS server (UDP ports 1812/1813)
 
 ## Installation
 
@@ -50,38 +54,67 @@ pip install -r requirements.txt
 
 ## Quick Start
 
-### Running the PANA Authentication Agent (PAA/Server)
+### Basic Authentication (EAP-TLS only)
 
+**Terminal 1 - PAA (Server):**
 ```bash
 # Run with default settings (binds to all interfaces on port 716)
-sudo python pyPANA.py paa
+sudo python3 pyPANA.py paa
 
 # Run on specific interface and custom port
-sudo python pyPANA.py paa --bind 192.168.1.100 --port 716
+sudo python3 pyPANA.py paa --bind 192.168.1.100 --port 716
+```
+
+**Terminal 2 - PaC (Client):**
+```bash
+# Connect to PAA
+python3 pyPANA.py pac 192.168.1.100
+
+# Connect to PAA on custom port
+python3 pyPANA.py pac 192.168.1.100 --port 716
 ```
 
 Note: Port 716 requires root/admin privileges. For testing, you can use a higher port.
 
-### Running the PANA Client (PaC)
+### Example: Basic Testing on Localhost
 
+**Terminal 1 (PAA):**
 ```bash
-# Connect to PAA
-python pyPANA.py pac 192.168.1.100
-
-# Connect to PAA on custom port
-python pyPANA.py pac 192.168.1.100 --port 716
+sudo python3 pyPANA.py paa --debug
 ```
 
-### Example: Testing on Localhost
-
-Terminal 1 (PAA):
+**Terminal 2 (PaC):**
 ```bash
-python pyPANA.py paa
+python3 pyPANA.py pac 127.0.0.1 --debug
 ```
 
-Terminal 2 (PaC):
+This will perform EAP-TLS authentication using automatically generated self-signed certificates.
+
+### Command Line Options
+
+**PAA (Server) Options:**
 ```bash
-python pyPANA.py pac 127.0.0.1
+python3 pyPANA.py paa [options]
+
+Options:
+  --bind ADDRESS        Bind to specific IP address (default: 0.0.0.0)
+  --port PORT          UDP port to listen on (default: 716)
+  --debug              Enable debug logging
+  --radius-server IP   RADIUS server IP address
+  --radius-port PORT   RADIUS server port (default: 1812)
+  --radius-secret SECRET  RADIUS shared secret
+  --radius-timeout SEC RADIUS request timeout (default: 5)
+  --radius-retries N   RADIUS retry attempts (default: 3)
+```
+
+**PaC (Client) Options:**
+```bash
+python3 pyPANA.py pac SERVER_IP [options]
+
+Options:
+  --port PORT          PAA server port (default: 716)
+  --debug              Enable debug logging
+  --timeout SEC        Connection timeout (default: 10)
 ```
 
 ## Protocol Overview
@@ -134,14 +167,205 @@ AUTH_ALGORITHM = AUTH_HMAC_SHA2_256_128
 ENCR_ALGORITHM = AES128_CTR
 ```
 
-### Enabling RADIUS Backend
+### Using RADIUS Backend Integration
+
+pyPANA can integrate with a RADIUS server for user authentication. The PANA Authentication Agent (PAA) acts as a RADIUS client, forwarding authentication requests to the RADIUS server.
+
+#### Setting up RADIUS Integration
+
+1. **Install FreeRADIUS (example setup on Ubuntu/Debian):**
+
+```bash
+# Install FreeRADIUS server
+sudo apt update
+sudo apt install freeradius freeradius-utils
+
+# Start the service
+sudo systemctl start freeradius
+sudo systemctl enable freeradius
+```
+
+2. **Configure FreeRADIUS:**
+
+Edit `/etc/freeradius/3.0/clients.conf` to add pyPANA as a client:
+
+```
+client pana_agent {
+    ipaddr = 127.0.0.1
+    secret = testing123
+    shortname = pana-agent
+    nastype = other
+}
+```
+
+3. **Add test users in `/etc/freeradius/3.0/users`:**
+
+```
+testuser    Cleartext-Password := "testpass"
+            Reply-Message = "Welcome to PANA network"
+
+alice       Cleartext-Password := "alice123"
+            Reply-Message = "Alice authenticated successfully"
+
+bob         Cleartext-Password := "bob456"
+            Reply-Message = "Bob authenticated successfully"
+```
+
+4. **Restart FreeRADIUS:**
+
+```bash
+sudo systemctl restart freeradius
+
+# Test RADIUS is working
+radtest testuser testpass 127.0.0.1 0 testing123
+```
+
+#### Running pyPANA with RADIUS Backend
+
+**Method 1: Using command line arguments:**
+
+```bash
+# Run PAA with RADIUS backend
+sudo python3 pyPANA.py paa --radius-server 127.0.0.1 --radius-port 1812 --radius-secret testing123
+```
+
+**Method 2: Using configuration in code:**
 
 ```python
+from pyPANA import PANAAuthAgent
+
+# Create PAA with RADIUS configuration
 agent = PANAAuthAgent(
-    radius_server='192.168.1.50',
+    bind_addr='0.0.0.0',
+    port=716,
+    radius_server='127.0.0.1',
     radius_port=1812,
-    radius_secret='shared'
+    radius_secret='testing123'
 )
+
+agent.run()
+```
+
+#### Complete RADIUS Setup Example
+
+Here's a complete example of setting up pyPANA with RADIUS on the same machine:
+
+**Terminal 1 - Setup FreeRADIUS:**
+
+```bash
+# Install and configure FreeRADIUS
+sudo apt install freeradius freeradius-utils
+
+# Add PANA client configuration
+echo 'client pana_agent {
+    ipaddr = 127.0.0.1
+    secret = testing123
+    shortname = pana-agent
+    nastype = other
+}' | sudo tee -a /etc/freeradius/3.0/clients.conf
+
+# Add test user
+echo 'testuser    Cleartext-Password := "testpass"
+            Reply-Message = "Welcome to PANA network"' | sudo tee -a /etc/freeradius/3.0/users
+
+# Restart FreeRADIUS
+sudo systemctl restart freeradius
+
+# Verify RADIUS is working
+radtest testuser testpass 127.0.0.1 0 testing123
+```
+
+**Terminal 2 - Run PAA with RADIUS:**
+
+```bash
+# Run PANA Authentication Agent with RADIUS backend
+sudo python3 pyPANA.py paa --radius-server 127.0.0.1 --radius-port 1812 --radius-secret testing123 --debug
+```
+
+**Terminal 3 - Run PANA Client:**
+
+```bash
+# Run PANA Client
+python3 pyPANA.py pac 127.0.0.1 --debug
+```
+
+#### Authentication Flow with RADIUS
+
+```
+PaC (Client)         PAA (Server)         RADIUS Server
+     |                    |                      |
+     |-- PCI (Start) ---->|                      |
+     |                    |                      |
+     |<-- PAR (EAP-Req) --|                      |
+     |                    |                      |
+     |-- PAN (EAP-Resp) ->|-- Access-Request --->|
+     |                    |                      |
+     |                    |<-- Access-Accept ----|
+     |                    |                      |
+     |<-- PAR (Success) --|                      |
+     |                    |                      |
+     |-- PAN (Complete) ->|                      |
+     |                    |                      |
+     |   [Authenticated]  |                      |
+```
+
+#### RADIUS Configuration Options
+
+You can customize the RADIUS integration:
+
+```python
+# Advanced RADIUS configuration
+agent = PANAAuthAgent(
+    radius_server='127.0.0.1',
+    radius_port=1812,
+    radius_secret='testing123',
+    radius_timeout=5,           # Request timeout (seconds)
+    radius_retries=3,           # Number of retries
+    radius_nas_identifier='pana-agent',  # NAS identifier
+    radius_nas_ip='192.168.1.100'       # NAS IP address
+)
+```
+
+#### Troubleshooting RADIUS Integration
+
+1. **RADIUS server not responding:**
+```bash
+# Check FreeRADIUS status
+sudo systemctl status freeradius
+
+# Check RADIUS logs
+sudo tail -f /var/log/freeradius/radius.log
+
+# Test RADIUS manually
+radtest testuser testpass 127.0.0.1 0 testing123
+```
+
+2. **Authentication failures:**
+```bash
+# Enable debug mode in FreeRADIUS
+sudo freeradius -X
+
+# Check pyPANA debug logs for RADIUS errors
+python3 pyPANA.py paa --radius-server 127.0.0.1 --debug
+```
+
+3. **Common issues:**
+   - **Wrong shared secret**: Ensure the secret matches in both clients.conf and pyPANA
+   - **Firewall blocking**: RADIUS uses UDP port 1812/1813
+   - **User not found**: Check the users file in FreeRADIUS configuration
+   - **IP restrictions**: Ensure the client IP is allowed in clients.conf
+
+#### Integration with External RADIUS Servers
+
+pyPANA can also work with external RADIUS servers like Microsoft NPS, Cisco ISE, or cloud-based AAA services:
+
+```bash
+# Connect to external RADIUS server
+sudo python3 pyPANA.py paa \
+  --radius-server radius.company.com \
+  --radius-port 1812 \
+  --radius-secret "your-shared-secret" \
+  --radius-nas-identifier "pana-gateway-01"
 ```
 
 ### Using with Certificates
