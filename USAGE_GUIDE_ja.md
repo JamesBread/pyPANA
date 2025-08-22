@@ -2,6 +2,9 @@
 
 このガイドでは、pyPANAをコマンドラインツールとして実行する方法と、Pythonライブラリとして使用する方法を説明します。
 
+> **📝 最終更新: 2025-08-22**  
+> v2.3.0 のRFC準拠改善に基づいて更新されました。
+
 ## 目次
 - [インストール](#インストール)
 - [コマンドラインでの使用](#コマンドラインでの使用)
@@ -10,6 +13,9 @@
 - [Pythonライブラリとしての使用](#pythonライブラリとしての使用)
   - [基本的な使用例](#基本的な使用例)
   - [高度な使用例](#高度な使用例)
+- [セキュリティ機能](#セキュリティ機能)
+  - [RFC準拠のセキュリティ強化](#rfc準拠のセキュリティ強化)
+  - [暗号化ポリシー設定](#暗号化ポリシー設定)
 - [テストスクリプトの例](#テストスクリプトの例)
 - [トラブルシューティング](#トラブルシューティング)
 
@@ -24,7 +30,7 @@ cd pyPANA
 pip install -r requirements.txt
 
 # 証明書を生成（初回のみ）
-python3 generate_certs.py
+bash generate_ca_certs.sh
 ```
 
 ## コマンドラインでの使用
@@ -352,6 +358,140 @@ if __name__ == "__main__":
     main()
 ```
 
+## セキュリティ機能
+
+### RFC準拠のセキュリティ強化
+
+pyPANA v2.3.0では、RFC5191/RFC6786準拠のセキュリティ機能が強化されています：
+
+#### 1. AUTH AVP強制 (RFC5191)
+
+鍵が確立された後のすべてのメッセージでAUTH AVPが必須となります：
+
+```python
+# AUTH AVPは自動的に追加・検証されます
+# 鍵確立後、AUTH AVPのないメッセージは破棄されます
+```
+
+**注意事項**:
+- 初期交換（S-bitセット）では強制されません
+- PCI（PANA-Client-Initiation）メッセージは除外されます
+
+#### 2. アンチリプレイ保護の改善
+
+32ビットシーケンス番号のラップアラウンドを正しく処理：
+
+```python
+# シーケンス番号が2^32-1から0にラップアラウンドしても
+# 正常に動作します
+# 長時間実行されるセッションでも安全です
+```
+
+#### 3. 暗号化ポリシー検証 (RFC6786)
+
+AVPの暗号化ポリシーが自動的に検証されます：
+
+```python
+from pana_encryption_policy import EncryptionPolicy
+
+# カスタム暗号化ポリシーの設定
+policy = EncryptionPolicy()
+policy.encryption_enabled = True
+policy.enforce_encryption = True  # 厳密な強制
+
+# PAAで使用
+paa = PANAAuthAgent(
+    bind_addr='0.0.0.0',
+    bind_port=5555,
+    encryption_policy=policy
+)
+```
+
+### 暗号化ポリシー設定
+
+#### 基本的な暗号化設定
+
+```python
+#!/usr/bin/env python3
+"""
+暗号化を有効にしたPANA通信の例
+"""
+from pana_server import PANAAuthAgent
+from pana_client import PANAClient
+from pana_encryption_policy import EncryptionPolicy
+
+def create_encrypted_paa():
+    """暗号化を有効にしたPAAサーバー"""
+    # 暗号化ポリシーを作成
+    policy = EncryptionPolicy()
+    policy.encryption_enabled = True
+    
+    # 暗号化が必須のAVPを追加（カスタム例）
+    # policy.mandatory_encrypt_avps.add(YOUR_CUSTOM_AVP)
+    
+    paa = PANAAuthAgent(
+        bind_addr='0.0.0.0',
+        bind_port=5555,
+        encryption_policy=policy
+    )
+    
+    return paa
+
+def create_encrypted_pac():
+    """暗号化を有効にしたPaCクライアント"""
+    pac = PANAClient(
+        server_addr='127.0.0.1',
+        server_port=5555
+    )
+    
+    # 暗号化を有効化
+    pac.enable_encryption = True
+    
+    return pac
+```
+
+#### 暗号化ポリシーのカスタマイズ
+
+```python
+from pana_encryption_policy import EncryptionPolicy
+from pana_constants import AVP_EAP_PAYLOAD, AVP_SESSION_LIFETIME
+
+class CustomEncryptionPolicy(EncryptionPolicy):
+    """カスタム暗号化ポリシー"""
+    
+    def __init__(self):
+        super().__init__()
+        
+        # EAPペイロードは常に暗号化
+        self.mandatory_encrypt_avps.add(AVP_EAP_PAYLOAD)
+        
+        # セッションライフタイムも必須暗号化に
+        self.mandatory_encrypt_avps.add(AVP_SESSION_LIFETIME)
+        
+        # 暗号化を強制
+        self.enforce_encryption = True
+    
+    def should_encrypt_avp(self, avp_code):
+        """AVPを暗号化すべきか判定"""
+        if avp_code in self.mandatory_encrypt_avps:
+            return True
+        return super().should_encrypt_avp(avp_code)
+```
+
+#### セキュリティ設定の確認
+
+```python
+# セキュリティ状態の確認
+def check_security_status(pac):
+    """クライアントのセキュリティ状態を確認"""
+    print(f"暗号化有効: {pac.crypto_ctx.is_encryption_enabled()}")
+    print(f"AUTH鍵確立: {pac.crypto_ctx.pana_auth_key is not None}")
+    print(f"セッションID: 0x{pac.session_id:08x}")
+    
+    if pac.crypto_ctx.pana_auth_key:
+        print(f"鍵長: {len(pac.crypto_ctx.pana_auth_key)} bytes")
+```
+
 ## テストスクリプトの例
 
 ### OpenPANA互換性テスト
@@ -394,6 +534,22 @@ def run_openpana_compatible_paa():
 if __name__ == "__main__":
     run_openpana_compatible_paa()
 ```
+
+### RFC準拠テスト
+
+```python
+#!/usr/bin/env python3
+"""
+RFC5191/RFC6786準拠機能のテスト
+"""
+# tests/test_rfc_compliance_fixes.py を実行
+python3 tests/test_rfc_compliance_fixes.py
+```
+
+このテストは以下を検証します：
+- AUTH AVP強制メカニズム
+- 暗号化ポリシー検証
+- アンチリプレイのラップアラウンド処理
 
 ### 統合テストスクリプト
 
@@ -546,7 +702,7 @@ python3 main.py paa --port 5555
 **解決方法**:
 ```bash
 # 証明書を生成
-python3 generate_certs.py
+bash generate_ca_certs.sh
 
 # または手動で証明書ディレクトリを作成
 mkdir -p certs
@@ -618,7 +774,14 @@ print(f"シーケンス番号: {pac.seq_number}")
 
 pyPANAは柔軟で強力なPANAプロトコル実装です。コマンドラインツールとしても、Pythonライブラリとしても使用でき、様々なネットワーク認証シナリオに対応できます。
 
+### v2.3.0の主な改善点
+
+- **完全なRFC5191準拠**: すべての必須要件を実装
+- **セキュリティ強化**: AUTH AVP強制、アンチリプレイ改善
+- **OpenPANA互換性**: プロトコルレベルで互換性確保
+- **エンタープライズ対応**: RADIUS統合、暗号化ポリシー
+
 詳細な情報については、以下のドキュメントも参照してください：
 - [README_ja.md](README_ja.md) - プロジェクトの概要
-- [test_case_ja.md](test_case_ja.md) - テストケースの詳細
+- [IMPLEMENTATION_DOCUMENTATION_ja.md](IMPLEMENTATION_DOCUMENTATION_ja.md) - 実装の詳細
 - [architecture_diagrams.md](architecture_diagrams.md) - アーキテクチャ図
