@@ -332,6 +332,16 @@ class PANAAuthAgent:
         if not msg.is_request() and session.seq_number > 0:
             self.retransmit_mgr.remove_message(session.seq_number - 1)
             
+        # RFC5191: AUTH AVP is mandatory after key establishment (except for PCI and initial exchanges)
+        # Don't enforce on initial exchanges (S-bit set) as keys aren't established yet
+        if (session.crypto_ctx.pana_auth_key and 
+            msg.msg_type != PANA_CLIENT_INITIATION and
+            not (msg.flags & FLAG_START)):  # Don't enforce on S-bit messages
+            auth_avp = msg.get_avp(AVP_AUTH)
+            if not auth_avp:
+                self.logger.warning(f"Missing mandatory AUTH AVP after key establishment from {addr}")
+                return  # Silently discard message
+            
         # AVPの抽出
         eap_payload = None  # EAPペイロード
         auth_avp = None     # 認証タグ

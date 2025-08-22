@@ -2,7 +2,8 @@
 
 A complete Python implementation of the Protocol for carrying Authentication for Network Access (PANA) as defined in RFC 5191 and RFC 6786. This implementation includes full EAP-TLS authentication support, AVP encryption capabilities, and is compatible with OpenSSL 3.x.
 
-> **🎉 v2.3.0 Release (2025-08-21) - COMPLETE RFC 5191 COMPLIANCE**
+> **🎉 v2.3.0 Release (2025-08-21) - COMPLETE RFC 5191 COMPLIANCE**  
+> **📝 Documentation updated: 2025-08-22**
 > 
 > **✅ All Major Issues Resolved:**
 > - ✅ **PyOpenSSL MSK Export**: Proper key derivation via `export_keying_material()`
@@ -855,6 +856,25 @@ openpac -i 127.0.0.1 -p 5555 -t eap-tls
 - `tests/test_openpana_fixed.py` - OpenPANA-compatible implementation with v2.3.0 fixes
 - `tests/run_final_test.sh` - Automated interoperability test script
 - `OPENPANA_ANALYSIS.md` - Detailed packet analysis documentation
+
+## Known Limitations and RFC Compliance Notes
+
+While pyPANA implements the core PANA protocol functionality, the following RFC5191/RFC6786 compliance items are known limitations in the current PoC implementation:
+
+### Protocol Validation
+- **Retransmission Timers**: Fixed 3-second intervals instead of RFC5191 randomized back-off with IRT/MRT/MRD parameters
+- **Flag Validation**: S (Start) and C (Complete) flags mutual exclusivity not enforced
+- **Reserved Bits**: Reserved flag bits in messages accepted without validation
+- **Message Length**: Soft enforcement only (messages beyond advertised length are capped, not rejected)
+
+### Message Flow
+- **Start Flag Usage**: PCI incorrectly sets Start bit; only initial PAR/PAN should have it per RFC5191
+- **Session ID Validation**: No verification that PCI uses session_id=0 and other messages use non-zero values
+- **Nonce AVP**: Not enforced as mandatory in initial PANA-Auth exchange with S-bit set
+- **Algorithm AVPs**: PRF-Algorithm and Integrity-Algorithm AVPs not enforced as mandatory during initial exchange
+
+### Impact Assessment
+These limitations do not affect basic protocol operation or security for PoC purposes but may cause interoperability issues with strict RFC-compliant implementations. They should be addressed before production deployment.
 
 ## Development
 

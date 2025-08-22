@@ -296,6 +296,16 @@ class PANAClient:
                     # RFC 6786: Silently discard messages violating policy
                     return
             
+        # RFC5191: AUTH AVP is mandatory after key establishment (except for PCI and initial exchanges)
+        # Don't enforce on initial exchanges (S-bit set) as keys aren't established yet
+        if (self.crypto_ctx.pana_auth_key and 
+            msg.msg_type != PANA_CLIENT_INITIATION and
+            not (msg.flags & FLAG_START)):  # Don't enforce on S-bit messages
+            auth_avp = msg.get_avp(AVP_AUTH)
+            if not auth_avp:
+                self.logger.warning(f"Missing mandatory AUTH AVP after key establishment")
+                return  # Silently discard message
+            
         # AVPの抽出と解析
         # 受信メッセージから必要な情報を抽出
         eap_payload = None      # EAPペイロード（認証データ）

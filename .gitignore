@@ -198,6 +198,7 @@ pypana-rfc-compliance-report.md
 # Test log files
 IOT.json
 openpana.json
+pypana.json
 paa_output.txt
 pac_output.txt
 paa_*.log
@@ -210,3 +211,6 @@ docs/archive/
 
 # Claude Code
 .claude
+CLAUDE.md
+request/
+

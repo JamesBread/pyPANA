@@ -43,5 +43,5 @@ def create_eap_tls_handler(is_server=False, cert_file=None, key_file=None, ca_ce
         is_server=is_server,
         cert_file=cert_file,
         key_file=key_file,
-        ca_cert=ca_cert
+        ca_file=ca_cert
     )
