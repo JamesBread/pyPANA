@@ -1,0 +1,50 @@
+eap {
+    default_eap_type = tls
+    timer_expire = 60
+    ignore_unknown_eap_types = no
+    cisco_accounting_username_bug = no
+    max_sessions = ${max_requests}
+
+    # TLS設定
+    tls-config tls-common {
+        private_key_password = 
+        private_key_file = /Users/kawashy/pana-radius-certs/server.key
+        certificate_file = /Users/kawashy/pana-radius-certs/server.crt
+        ca_file = /Users/kawashy/pana-radius-certs/ca.crt
+        dh_file = /Users/kawashy/pana-radius-certs/dh
+        ca_path = ${cadir}
+        
+        cipher_list = "DEFAULT"
+        cipher_server_preference = no
+        
+        # TLSバージョン設定
+        tls_min_version = "1.2"
+        tls_max_version = "1.2"
+        
+        ecdh_curve = "prime256v1"
+        
+        cache {
+            enable = no
+            lifetime = 24
+            max_entries = 255
+        }
+        
+        verify {
+            # クライアント証明書の検証をスキップ（テスト用）
+            # 本番環境では適切に設定すること
+        }
+        
+        ocsp {
+            enable = no
+            override_cert_url = yes
+            url = "http://127.0.0.1/ocsp/"
+        }
+    }
+
+    # EAP-TLS
+    tls {
+        tls = tls-common
+        # MSKを適切に生成
+        virtual_server = default
+    }
+}

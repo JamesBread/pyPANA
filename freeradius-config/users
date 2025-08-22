@@ -1,0 +1,8 @@
+# EAP-TLS用ユーザー
+user@example.com    Cleartext-Password := "unused"
+                    Reply-Message := "Welcome PANA User",
+                    Session-Timeout := 3600
+
+# テスト用ユーザー（PAP）
+testuser    Cleartext-Password := "testpass"
+            Reply-Message := "Test User"
