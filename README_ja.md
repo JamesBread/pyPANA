@@ -1,5 +1,8 @@
 # pyPANA - RFC5191 PANAプロトコル実装
 
+> **⚠️ 免責事項**  
+> この実装はClaude CodeとChatGPTを用いたVibeコーディングにより実施した個人開発プロダクトです。コードの品質担保および動作保証はしていません。
+
 RFC5191で定義されたPANA（Protocol for carrying Authentication for Network Access）の完全なPython実装です。完全なEAP-TLS認証サポートを含み、OpenSSL 3.xに対応しています。
 
 > **🎉 v2.3.0 リリース (2025-08-21) - 完全なRFC 5191準拠達成**  
