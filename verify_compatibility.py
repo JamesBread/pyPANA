@@ -1,7 +1,23 @@
 #!/usr/bin/env python3
 """
+pyPANA v2.3.0 互換性検証スクリプト
 Verify pyPANA v2.3.0 compatibility fixes.
 This script checks that all RFC 5191 compliance fixes are properly implemented.
+
+【概要】
+pyPANA v2.3.0のRFC 5191準拠修正が適切に実装されているかを検証するスクリプト。
+OpenPANAとの互換性確保のため、以下の項目をチェックします：
+
+【検証項目】
+1. PCIメッセージフォーマット（ヘッダーのみ16バイト）
+2. ナンス長（RFC 5191に準拠した20バイト）
+3. デフォルトアルゴリズム（SHA1ベース）
+4. AUTH AVP長（SHA1-160で20バイト）
+5. サーバーのアルゴリズム優先度
+6. クライアントのアルゴリズム選択
+
+【実行結果】
+すべてのテストがパスした場合、OpenPANAとの相互運用性が期待できます。
 """
 
 import sys
@@ -13,7 +29,17 @@ from pana_constants import *
 from pana_crypto import CryptoContext
 
 def verify_fixes():
-    """Verify all v2.3.0 fixes"""
+    """
+    v2.3.0の修正内容をすべて検証
+    Verify all v2.3.0 fixes
+    
+    【機能説明】
+    pyPANA v2.3.0で実装されたRFC 5191準拠修正をテストし、
+    OpenPANAとの互換性を確認します。
+    
+    Returns:
+        bool: すべてのテストがパスした場合True
+    """
     print("=" * 60)
     print("pyPANA v2.3.0 Compatibility Verification")
     print("=" * 60)
@@ -22,6 +48,7 @@ def verify_fixes():
     all_pass = True
     
     # Test 1: PCI Message Format
+    # テスト1: PCIメッセージフォーマット
     print("1. PCI Message Format")
     pci = PANAMessage()
     pci.msg_type = PANA_CLIENT_INITIATION
@@ -38,6 +65,7 @@ def verify_fixes():
     print()
     
     # Test 2: Nonce Length
+    # テスト2: ナンス長（RFC 5191準拠の20バイト）
     print("2. Nonce Generation")
     ctx = CryptoContext()
     nonce = ctx.generate_nonce()
@@ -50,6 +78,7 @@ def verify_fixes():
     print()
     
     # Test 3: Default Algorithms
+    # テスト3: デフォルトアルゴリズム（OpenPANA互換性のためSHA1）
     print("3. Default Algorithms")
     
     if ctx.prf_algorithm == PRF_HMAC_SHA1:
@@ -66,6 +95,7 @@ def verify_fixes():
     print()
     
     # Test 4: AUTH AVP Length
+    # テスト4: AUTH AVP長（SHA1-160で20バイト）
     print("4. AUTH AVP Calculation")
     ctx.pana_auth_key = b'test_key' * 4  # 32 bytes
     test_msg = b'test_message'
@@ -79,6 +109,7 @@ def verify_fixes():
     print()
     
     # Test 5: Algorithm Priority in Server
+    # テスト5: サーバーのアルゴリズム優先度（OpenPANA互換性）
     print("5. Server Algorithm Priority")
     # This would need to check the actual server code
     # For now, we'll just note the expected behavior
@@ -88,6 +119,7 @@ def verify_fixes():
     print()
     
     # Test 6: Client Algorithm Selection
+    # テスト6: クライアントのアルゴリズム選択（OpenPANA互換性）
     print("6. Client Algorithm Selection")
     print("   ℹ️  Client should prefer SHA1 when available")
     print("   ℹ️  Falls back to SHA256 if SHA1 not offered")
@@ -106,7 +138,14 @@ def verify_fixes():
     return all_pass
 
 def compare_with_openpana():
-    """Show expected vs actual for OpenPANA compatibility"""
+    """
+    OpenPANAとの互換性マトリックスを表示
+    Show expected vs actual for OpenPANA compatibility
+    
+    【機能説明】
+    pyPANA v2.3.0とOpenPANAの主要パラメータを比較し、
+    相互運用性を確認するためのマトリックスを表示します。
+    """
     print()
     print("OpenPANA Compatibility Matrix")
     print("-" * 60)

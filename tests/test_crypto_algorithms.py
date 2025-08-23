@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
 """
+pyPANA暗号化アルゴリズムテスト
 Test all cryptographic algorithms in pyPANA:
 - PRF_HMAC_SHA2_256 for key derivation
 - AUTH_HMAC_SHA2_256_128 for message authentication
 - AES128_CTR for encryption
+
+【概要】
+pyPANAで使用される全ての暗号化アルゴリズムの動作を検証します。
+RFC 5191およびRFC 6786に準拠した実装をテストします。
+
+【テスト対象アルゴリズム】
+1. PRF_HMAC_SHA2_256: キー導出用（RFC 5191）
+2. AUTH_HMAC_SHA2_256_128: メッセージ認証用（RFC 5191）
+3. AES128_CTR: 暗号化用（RFC 6786）
+4. 統合された暗号化処理のテスト
 """
 
 import sys
@@ -18,7 +29,16 @@ from pana_messages import PANAMessage, AVP
 from pana_constants import *
 
 def test_prf_hmac_sha2_256():
-    """Test PRF_HMAC_SHA2_256 key derivation"""
+    """
+    PRF_HMAC_SHA2_256キー導出テスト
+    Test PRF_HMAC_SHA2_256 key derivation
+    
+    【テスト内容】
+    1. SHA-256ベースのPRFによるキー導出
+    2. PANA_AUTH_KEY、PANA_PAC_ENCR_KEY、PANA_PAA_ENCR_KEYの生成
+    3. キー長の検証（SHA-256: 32バイト認証キー）
+    4. キーの一意性確認
+    """
     print("Testing PRF_HMAC_SHA2_256...")
     
     ctx = CryptoContext()
@@ -58,7 +78,16 @@ def test_prf_hmac_sha2_256():
     return True
 
 def test_auth_hmac_sha2_256_128():
-    """Test AUTH_HMAC_SHA2_256_128 for message authentication"""
+    """
+    AUTH_HMAC_SHA2_256_128メッセージ認証テスト
+    Test AUTH_HMAC_SHA2_256_128 for message authentication
+    
+    【テスト内容】
+    1. SHA-256ベース128ビットHMACの生成
+    2. PANAメッセージの認証値計算
+    3. 認証値の検証機能テスト
+    4. 改ざんメッセージの検出確認
+    """
     print("\nTesting AUTH_HMAC_SHA2_256_128...")
     
     ctx = CryptoContext()
@@ -102,7 +131,16 @@ def test_auth_hmac_sha2_256_128():
     return True
 
 def test_aes128_ctr():
-    """Test AES128_CTR encryption"""
+    """
+    AES128_CTR暗号化テスト
+    Test AES128_CTR encryption
+    
+    【テスト内容】
+    1. AES-128 CTRモードによる双方向暗号化
+    2. PaC→PAA および PAA→PaC 暗号化
+    3. RFC 6786準拠のナンス構築
+    4. 異なるキーによる暗号文の違い確認
+    """
     print("\nTesting AES128_CTR...")
     
     ctx = CryptoContext()
@@ -153,7 +191,16 @@ def test_aes128_ctr():
     return True
 
 def test_integrated_crypto():
-    """Test all algorithms working together in a realistic scenario"""
+    """
+    統合暗号化処理テスト
+    Test all algorithms working together in a realistic scenario
+    
+    【テスト内容】
+    1. 全アルゴリズムの統合動作確認
+    2. 現実的なシナリオでの暗号化処理
+    3. EAP MSKシミュレーション
+    4. メッセージ認証と暗号化の組み合わせテスト
+    """
     print("\nTesting integrated cryptographic operations...")
     
     # Setup crypto context with all algorithms
@@ -213,7 +260,18 @@ def test_integrated_crypto():
     return True
 
 def main():
-    """Run all cryptographic algorithm tests"""
+    """
+    全暗号化アルゴリズムテストを実行
+    Run all cryptographic algorithm tests
+    
+    【実行内容】
+    1. 各アルゴリズムテストを順次実行
+    2. テスト結果の集計と報告
+    3. 失敗したテストの詳細表示
+    
+    Returns:
+        bool: 全テストが成功した場合True
+    """
     print("=" * 60)
     print("pyPANA Cryptographic Algorithms Test")
     print("=" * 60)

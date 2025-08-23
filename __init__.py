@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
 """
+pyPANA - RFC5191 PANAプロトコル実装
 pyPANA - RFC5191 PANA Protocol Implementation
+
+【概要】
+RFC5191で規定されたネットワークアクセス認証のためのプロトコル（PANA）の
+完全な実装です。RFC5216に基づくEAP-TLSサポートも含まれています。
 
 A complete implementation of the Protocol for carrying Authentication for Network Access (PANA)
 as specified in RFC5191, with EAP-TLS support according to RFC5216.
 
-Main classes:
-- PANAClient: PANA Client (PaC) implementation
-- PANAAuthAgent: PANA Authentication Agent (PAA) implementation
-- PANAMessage: PANA message structure
-- AVP: Attribute-Value Pair structure
-- CryptoContext: Cryptographic operations for PANA
-- EAPTLSHandler: EAP-TLS authentication handler
+【主要クラス / Main classes】
+- PANAClient: PANAクライアント（PaC）実装
+- PANAAuthAgent: PANA認証エージェント（PAA）実装
+- PANAMessage: PANAメッセージ構造
+- AVP: 属性値ペア（Attribute-Value Pair）構造
+- CryptoContext: PANA用暗号化操作
+- EAPTLSHandler: EAP-TLS認証ハンドラー
 
-Usage:
+【使用例 / Usage】
     from pana_client import PANAClient
     from pana_server import PANAAuthAgent
     
-    # Run as client
+    # クライアントとして実行 / Run as client
     client = PANAClient('192.168.1.1')
     client.run()
     
-    # Run as server  
+    # サーバーとして実行 / Run as server  
     server = PANAAuthAgent()
     server.run()
 """

@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Simple authentication test bypassing EAP-TLS complexity"""
+"""
+シンプル認証テスト（EAP-TLSをバイパス）
+Simple authentication test bypassing EAP-TLS complexity
+
+【概要】
+EAP-TLSの複雑さを回避し、基本的なPANAプロトコルの動作を
+テストします。PCI→PAR→PANの基本フローを確認し、
+ナンス交換とアルゴリズム選択を検証します。
+
+【テスト内容】
+1. シンプルPAA（認証エージェント）の実装
+2. シンプルPaC（クライアント）の実装
+3. 基本的なPANAプロトコルフローの確認
+4. ナンス交換とアルゴリズムネゴシエーション
+"""
 
 import sys
 import socket
@@ -15,7 +29,15 @@ from pana_crypto import CryptoContext
 import struct
 
 def simple_paa():
-    """Simple PAA that accepts any client"""
+    """
+    シンプルPAA（認証エージェント）実装
+    Simple PAA that accepts any client
+    
+    【機能説明】
+    任意のクライアントを受け入れるシンプルなPAAです。
+    EAP-TLSを使用せず、基本的なPANAプロトコルのみを実装し、
+    PCIメッセージを受信してPARで応答します。
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('127.0.0.1', 5558))
     sock.settimeout(1.0)
@@ -36,6 +58,7 @@ def simple_paa():
                 print(f"PAA: Received PCI from {addr}")
                 
                 # Send initial PAR with S-bit
+                # Sビット付き初期PARを送信
                 par = PANAMessage()
                 par.msg_type = PANA_AUTH
                 par.flags = FLAG_REQUEST | FLAG_START
@@ -43,6 +66,7 @@ def simple_paa():
                 par.seq_number = seq
                 
                 # Add nonce and algorithms
+                # ナンスとアルゴリズムを追加（OpenPANA互換性のためSHA1）
                 ctx.nonce_paa = ctx.generate_nonce()
                 par.add_avp(AVP(AVP_NONCE, 0, ctx.nonce_paa))
                 par.add_avp(AVP(AVP_PRF_ALGORITHM, 0, struct.pack('!I', PRF_HMAC_SHA1)))
@@ -73,7 +97,15 @@ def simple_paa():
     sock.close()
 
 def simple_pac():
-    """Simple PaC"""
+    """
+    シンプルPaC（クライアント）実装
+    Simple PaC
+    
+    【機能説明】
+    基本的なPANAクライアントの実装です。
+    PCIメッセージで認証を開始し、PARを受信後に
+    PANメッセージで応答します。
+    """
     time.sleep(0.5)  # Let PAA start
     
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -108,6 +140,7 @@ def simple_pac():
                 print(f"PaC: Got PAA nonce ({len(ctx.nonce_paa)} bytes)")
             
             # Send PAN with S-bit and nonce
+            # Sビットとナンス付きPANを送信
             pan = PANAMessage()
             pan.msg_type = PANA_AUTH
             pan.flags = FLAG_START
@@ -115,6 +148,7 @@ def simple_pac():
             pan.seq_number = par.seq_number
             
             # Add client nonce
+            # クライアントナンスとアルゴリズムを追加
             ctx.nonce_pac = ctx.generate_nonce()
             pan.add_avp(AVP(AVP_NONCE, 0, ctx.nonce_pac))
             pan.add_avp(AVP(AVP_PRF_ALGORITHM, 0, struct.pack('!I', PRF_HMAC_SHA1)))
@@ -130,19 +164,33 @@ def simple_pac():
     sock.close()
 
 def main():
+    """
+    メインテスト実行関数
+    
+    【実行内容】
+    1. PAAをバックグラウンドスレッドで起動
+    2. PaCをメインスレッドで実行
+    3. 基本的なPANAプロトコルフローをテスト
+    
+    Returns:
+        int: 成功時は0
+    """
     print("=" * 60)
     print("Simple PANA Authentication Test")
     print("=" * 60)
     print()
     
     # Run PAA in thread
+    # PAAをスレッドで実行
     paa_thread = threading.Thread(target=simple_paa, daemon=True)
     paa_thread.start()
     
     # Run PaC
+    # PaCを実行
     simple_pac()
     
     print("\n✅ Basic protocol flow works correctly!")
+    print("  基本的なPANAプロトコルフローが正常に動作しました")
     return 0
 
 if __name__ == "__main__":

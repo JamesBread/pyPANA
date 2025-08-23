@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Test PANA protocol flow with v2.3.0 fixes"""
+"""
+PANAプロトコルフローテスト（v2.3.0修正版）
+Test PANA protocol flow with v2.3.0 fixes
+
+【概要】
+pyPANA v2.3.0で修正されたPANAプロトコルフローをテストします。
+RFC 5191準拠のメッセージフォーマット、ナンス交換、
+アルゴリズム選択、基本的なプロトコルシーケンスを検証します。
+
+【テスト内容】
+1. PCI（PANA Client Initiation）メッセージフォーマット
+2. ナンス生成と長さ検証（20バイト）
+3. アルゴリズムネゴシエーション（SHA1優先）
+4. メッセージシーケンスとフロー制御
+"""
 
 import socket
 import struct
@@ -12,16 +26,26 @@ from pana_messages import PANAMessage, AVP
 from pana_constants import *
 
 def test_pci_format():
-    """Test that PCI is correctly formatted"""
+    """
+    PCIメッセージフォーマットテスト
+    Test that PCI is correctly formatted
+    
+    【テスト内容】
+    1. PCIメッセージの作成とパッキング
+    2. RFC 5191準拠のフォーマット検証（16バイトヘッダーのみ）
+    3. AVPの含有状況確認（PCIにはAVPを含まない）
+    4. session_id=0、seq_number=0の確認
+    """
     print("1. Testing PCI Format")
     print("-" * 40)
     
     # Create PCI as PaC would
+    # PaCが作成するPCIメッセージ
     pci = PANAMessage()
     pci.msg_type = PANA_CLIENT_INITIATION
     pci.flags = FLAG_REQUEST | FLAG_START
-    pci.session_id = 0
-    pci.seq_number = 0
+    pci.session_id = 0  # PCIではsession_id=0
+    pci.seq_number = 0  # PCIではseq_number=0
     
     pci_data = pci.pack()
     

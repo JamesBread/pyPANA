@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 """
+RFC 6786 準拠性テスト
 Test RFC 6786 Compliance
 Tests full RFC 6786 encryption implementation and policy compliance
+
+【概要】
+RFC 6786で規定されたPANA AVP暗号化機能の完全な実装と
+ポリシー準拠性をテストします。暗号化ポリシー、AVP暗号化、
+復号化、エラーハンドリングを包括的に検証します。
+
+【テスト対象】
+1. RFC 6786 Section 6.1 暗号化ポリシーテーブル
+2. AVP暗号化・復号化処理
+3. 暗号化コンテキストの管理
+4. エラーハンドリングと例外処理
+5. AES128-CTRモードの実装確認
 """
 
 import unittest

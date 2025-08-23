@@ -2,6 +2,9 @@
 """
 Main entry point for pyPANA - RFC5191 PANA Implementation
 Command-line interface for both PANA Client and Authentication Agent
+
+pyPANAのメインエントリーポイント - RFC5191 PANA実装
+PANAクライアントと認証エージェントの両方のコマンドラインインターフェース
 """
 
 import sys
@@ -12,7 +15,12 @@ from pana_server import PANAAuthAgent
 
 
 def signal_handler(sig, frame):
-    """Handle shutdown signals"""
+    """Handle shutdown signals
+    
+    シャットダウンシグナルを処理する
+    Ctrl+Cなどの割り込みシグナルを受信した際に、
+    サーバーまたはクライアントを適切に停止する
+    """
     print("\nShutting down...")
     if 'server' in globals():
         server.stop()
@@ -22,7 +30,15 @@ def signal_handler(sig, frame):
 
 
 def setup_logging(debug=False):
-    """Configure logging"""
+    """Configure logging
+    
+    ロギングの設定を行う
+    デバッグモードが有効な場合はDEBUGレベル、
+    それ以外の場合はINFOレベルでログを出力する
+    
+    Args:
+        debug: デバッグモードのフラグ
+    """
     log_level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
         level=log_level,
@@ -31,7 +47,12 @@ def setup_logging(debug=False):
 
 
 def print_usage():
-    """Print usage information"""
+    """Print usage information
+    
+    使用方法の情報を表示する
+    PANAサーバー（PAA）とクライアント（PaC）の
+    起動方法と主要機能を説明する
+    """
     print("RFC5191 PANA Implementation")
     print("===========================")
     print("Usage: python main.py [paa|pac] [options]")
@@ -57,7 +78,17 @@ def print_usage():
 
 
 def run_paa(port=716, bind_addr='0.0.0.0', debug=False):
-    """Run PANA Authentication Agent"""
+    """Run PANA Authentication Agent
+    
+    PANA認証エージェント（PAA）を起動する
+    サーバーモードでPANAプロトコルを実行し、
+    クライアントからの認証要求を待ち受ける
+    
+    Args:
+        port: リスニングポート番号（デフォルト: 716）
+        bind_addr: バインドするIPアドレス（デフォルト: 全インターフェース）
+        debug: デバッグモードのフラグ
+    """
     setup_logging(debug)
     
     print("Starting PANA Authentication Agent (PAA)...")
@@ -76,7 +107,17 @@ def run_paa(port=716, bind_addr='0.0.0.0', debug=False):
 
 
 def run_pac(server_addr, port=716, debug=False):
-    """Run PANA Client"""
+    """Run PANA Client
+    
+    PANAクライアント（PaC）を起動する
+    指定されたPAAサーバーに接続し、
+    EAP-TLS認証を実行する
+    
+    Args:
+        server_addr: PAAサーバーのIPアドレス
+        port: PAAサーバーのポート番号（デフォルト: 716）
+        debug: デバッグモードのフラグ
+    """
     setup_logging(debug)
     
     print(f"Starting PANA Client (PaC)...")
@@ -95,11 +136,16 @@ def run_pac(server_addr, port=716, debug=False):
 
 
 def main():
-    """Main entry point"""
-    # Register signal handler
+    """Main entry point
+    
+    メインエントリーポイント
+    コマンドライン引数を解析し、PAAまたはPaCモードで
+    アプリケーションを起動する
+    """
+    # シグナルハンドラーを登録（適切なシャットダウンのため）
     signal.signal(signal.SIGINT, signal_handler)
     
-    # Parse command line arguments
+    # コマンドライン引数を解析
     import argparse
     
     if len(sys.argv) < 2:
@@ -109,6 +155,7 @@ def main():
     mode = sys.argv[1].lower()
     
     if mode == 'paa':
+        # PAAモード: PANA認証エージェント（サーバー）として動作
         parser = argparse.ArgumentParser(prog='main.py paa')
         parser.add_argument('mode', help='Mode (paa)')
         parser.add_argument('--port', type=int, default=716, help='UDP port to listen on')
@@ -118,6 +165,7 @@ def main():
         run_paa(port=args.port, bind_addr=args.bind, debug=args.debug)
         
     elif mode == 'pac':
+        # PaCモード: PANAクライアントとして動作
         parser = argparse.ArgumentParser(prog='main.py pac')
         parser.add_argument('mode', help='Mode (pac)')
         parser.add_argument('server', help='PAA server address')

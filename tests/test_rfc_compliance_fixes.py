@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 """
+RFC準拠性修正テストケース
 Test cases for RFC compliance fixes
 Tests for AUTH AVP enforcement, encryption policy validation, and anti-replay wrap-around
+
+【概要】
+RFC 5191およびRFC 6786準拠性を確保するための修正をテストします。
+AUTH AVPの強制適用、暗号化ポリシー検証、アンチリプレイラップアラウンド
+などの重要な機能修正を包括的に検証します。
+
+【テスト対象】
+1. AUTH AVP強制適用と検証
+2. 暗号化ポリシーの妥当性確認
+3. アンチリプレイ機能のラップアラウンド処理
+4. エラーハンドリングとリカバリ機能
+5. セキュリティ機能の統合テスト
 """
 
 import sys

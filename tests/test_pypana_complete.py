@@ -1,27 +1,66 @@
 #!/usr/bin/env python3
-"""Test pyPANA PaC with pyPANA PAA"""
+"""
+pyPANA 完全動作テスト（PaC ↔ PAA）
+Test pyPANA PaC with pyPANA PAA
+
+【概要】
+pyPANA実装のPaC（クライアント）とPAA（認証エージェント）間の
+完全な認証フローをテストします。プロセス間通信による実際の
+ネットワーク通信環境での動作を確認し、実用的な相互運用性を検証します。
+
+【テスト内容】
+1. pyPANA PAA プロセスの起動と初期化
+2. pyPANA PaC プロセスの起動と認証開始
+3. 完全なPANA認証フローの実行
+4. 認証結果の確認と成功判定
+5. プロセス終了と清掃処理
+
+【検証項目】
+- プロセス間でのUDP通信動作
+- RFC 5191準拠のメッセージ交換
+- EAP-TLS認証フローの完了
+- セッション確立とOPEN状態の達成
+"""
 import subprocess
 import time
 import sys
 import os
 
 def test_pypana():
+    """
+    pyPANA 完全動作テスト実行
+    
+    【テスト手順】
+    1. PAA（認証エージェント）プロセス起動
+    2. PaC（クライアント）プロセス起動  
+    3. 認証フローの実行と監視
+    4. 結果の収集と評価
+    5. プロセスの適切な終了
+    
+    Returns:
+        bool: テストが成功した場合True
+    """
     print("=" * 60)
     print("Testing pyPANA PaC <-> pyPANA PAA")
+    print("pyPANA 完全動作テスト（PaC ↔ PAA）")
     print("=" * 60)
     
-    # Start PAA
+    # Start PAA  
+    # PAA（認証エージェント）を起動
     print("\n1. Starting pyPANA PAA on port 5562...")
+    print("   PAA（認証エージェント）をポート5562で起動中...")
     paa_proc = subprocess.Popen(
         [sys.executable, 'main.py', 'paa', '--port', '5562'],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True
     )
-    time.sleep(2)
+    time.sleep(2)  # PAAの初期化を待機
     
     # Start PaC
+    # PaC（クライアント）を起動
     print("2. Starting pyPANA PaC...")
+    print("   PaC（クライアント）を起動中...")
     pac_proc = subprocess.Popen(
         [sys.executable, 'main.py', 'pac', '127.0.0.1', '--port', '5562'],
         stdout=subprocess.PIPE,

@@ -3,8 +3,26 @@
 RADIUS Backend Integration for PANA
 Implements RADIUS client functionality for enterprise authentication
 
-This module addresses Phase 3 requirement: RADIUS backend integration
-Allows PANA to delegate authentication to enterprise RADIUS servers
+【概要】
+PANAの企業認証向けRADIUSバックエンド統合モジュール。
+PANAプロトコルから企業のRADIUSサーバーに認証を委譲する機能を提供します。
+
+【主な機能】
+- RADIUS Access-Request/Accept/Reject/Challengeメッセージの処理
+- EAPメッセージのRADIUSカプセル化
+- RADIUS属性の管理とエンコーディング
+- メッセージ認証子（Message-Authenticator）の計算
+- セッション状態の維持とタイムアウト処理
+- 複数RADIUSサーバーへの負荷分散とフェイルオーバー
+
+【アーキテクチャ】
+このモジュールはフェーズ3の要件に対応し、PANAが企業の既存認証インフラ
+（RADIUS/Active Directory/LDAP）と統合できるようにします。
+
+【RFC準拠】
+- RFC 2865: Remote Authentication Dial In User Service (RADIUS)
+- RFC 2869: RADIUS Extensions 
+- RFC 3579: RADIUS (Remote Authentication Dial In User Service) Support For Extensible Authentication Protocol (EAP)
 """
 
 import os
@@ -19,113 +37,179 @@ from typing import Optional, Tuple, Dict, Any, List
 from enum import IntEnum
 import random
 
-# RADIUS Constants
-RADIUS_AUTH_PORT = 1812
-RADIUS_ACCT_PORT = 1813
+# RADIUS定数
+RADIUS_AUTH_PORT = 1812  # 認証ポート（RFC 2865）
+RADIUS_ACCT_PORT = 1813  # アカウンティングポート（RFC 2866）
 
 class RadiusCode(IntEnum):
-    """RADIUS packet codes"""
-    ACCESS_REQUEST = 1
-    ACCESS_ACCEPT = 2
-    ACCESS_REJECT = 3
-    ACCOUNTING_REQUEST = 4
-    ACCOUNTING_RESPONSE = 5
-    ACCESS_CHALLENGE = 11
-    STATUS_SERVER = 12
-    STATUS_CLIENT = 13
+    """RADIUSパケットコード（RFC 2865準拠）
+    
+    【説明】
+    RADIUSプロトコルで使用されるメッセージタイプの定義。
+    各コードは特定の認証フローにおける役割を持ちます。
+    """
+    ACCESS_REQUEST = 1      # アクセス要求（クライアント→サーバー）
+    ACCESS_ACCEPT = 2       # アクセス許可（サーバー→クライアント）
+    ACCESS_REJECT = 3       # アクセス拒否（サーバー→クライアント）
+    ACCOUNTING_REQUEST = 4  # アカウンティング要求
+    ACCOUNTING_RESPONSE = 5 # アカウンティング応答
+    ACCESS_CHALLENGE = 11   # アクセスチャレンジ（EAP継続時）
+    STATUS_SERVER = 12      # サーバー状態確認
+    STATUS_CLIENT = 13      # クライアント状態確認
 
 class RadiusAttribute(IntEnum):
-    """Common RADIUS attributes"""
-    USER_NAME = 1
-    USER_PASSWORD = 2
-    NAS_IP_ADDRESS = 4
-    NAS_PORT = 5
-    SERVICE_TYPE = 6
-    FRAMED_PROTOCOL = 7
-    CALLED_STATION_ID = 30
-    CALLING_STATION_ID = 31
-    NAS_IDENTIFIER = 32
-    STATE = 24
-    CLASS = 25
-    SESSION_TIMEOUT = 27
-    IDLE_TIMEOUT = 28
-    TERMINATION_ACTION = 29
-    NAS_PORT_TYPE = 61
-    CONNECT_INFO = 77
-    EAP_MESSAGE = 79
-    MESSAGE_AUTHENTICATOR = 80
-    NAS_PORT_ID = 87
+    """一般的なRADIUS属性（RFC 2865準拠）
+    
+    【説明】
+    RADIUSメッセージで使用される標準属性タイプの定義。
+    各属性はネットワークアクセス制御に必要な情報を運搬します。
+    """
+    USER_NAME = 1           # ユーザー名
+    USER_PASSWORD = 2       # ユーザーパスワード（PAP用）
+    NAS_IP_ADDRESS = 4      # NAS（Network Access Server）のIPアドレス
+    NAS_PORT = 5            # NASポート番号
+    SERVICE_TYPE = 6        # サービスタイプ
+    FRAMED_PROTOCOL = 7     # フレーム化プロトコル
+    CALLED_STATION_ID = 30  # 呼び出し先ステーション（アクセスポイントMAC等）
+    CALLING_STATION_ID = 31 # 呼び出し元ステーション（クライアントMAC等）
+    NAS_IDENTIFIER = 32     # NAS識別子（文字列）
+    STATE = 24              # 状態情報（EAP継続時に使用）
+    CLASS = 25              # クラス情報
+    SESSION_TIMEOUT = 27    # セッションタイムアウト値
+    IDLE_TIMEOUT = 28           # アイドルタイムアウト値
+    TERMINATION_ACTION = 29     # 終了時のアクション
+    NAS_PORT_TYPE = 61          # NASポートタイプ
+    CONNECT_INFO = 77           # 接続情報
+    EAP_MESSAGE = 79            # EAPメッセージ（RFC 3579）
+    MESSAGE_AUTHENTICATOR = 80  # メッセージ認証子（RFC 2869）
+    NAS_PORT_ID = 87            # NASポートID（文字列）
 
 class RadiusServiceType(IntEnum):
-    """RADIUS Service Types"""
-    LOGIN = 1
-    FRAMED = 2
-    CALLBACK_LOGIN = 3
-    CALLBACK_FRAMED = 4
-    OUTBOUND = 5
-    ADMINISTRATIVE = 6
-    NAS_PROMPT = 7
-    AUTHENTICATE_ONLY = 8
-    CALLBACK_NAS_PROMPT = 9
+    """RADIUSサービスタイプ（RFC 2865準拠）
+    
+    【説明】
+    ユーザーが要求するサービスの種類を示します。
+    ネットワークアクセスの形態に応じて適切な値を設定します。
+    """
+    LOGIN = 1                   # ログインサービス
+    FRAMED = 2                  # フレーム化サービス（PPP等）
+    CALLBACK_LOGIN = 3          # コールバックログイン
+    CALLBACK_FRAMED = 4         # コールバックフレーム化
+    OUTBOUND = 5                # アウトバウンド接続
+    ADMINISTRATIVE = 6          # 管理用接続
+    NAS_PROMPT = 7              # NASプロンプト
+    AUTHENTICATE_ONLY = 8       # 認証のみ（PANAで使用）
+    CALLBACK_NAS_PROMPT = 9     # コールバックNASプロンプト
 
 class RadiusNASPortType(IntEnum):
-    """NAS Port Types"""
-    ASYNC = 0
-    SYNC = 1
-    ISDN_SYNC = 2
-    ISDN_ASYNC_V120 = 3
-    ISDN_ASYNC_V110 = 4
-    VIRTUAL = 5
-    PIAFS = 6
-    HDLC_CLEAR_CHANNEL = 7
-    X25 = 8
-    X75 = 9
-    G3_FAX = 10
-    SDSL = 11
-    ADSL_CAP = 12
-    ADSL_DMT = 13
-    IDSL = 14
-    ETHERNET = 15
-    XDSL = 16
-    CABLE = 17
-    WIRELESS_OTHER = 18
-    WIRELESS_802_11 = 19
+    """NASポートタイプ（RFC 2865拡張）
+    
+    【説明】
+    ネットワークアクセスサーバーが提供する物理的または論理的な
+    接続インターフェースの種類を示します。
+    """
+    ASYNC = 0                   # 非同期接続
+    SYNC = 1                    # 同期接続
+    ISDN_SYNC = 2               # ISDN同期
+    ISDN_ASYNC_V120 = 3         # ISDN非同期V.120
+    ISDN_ASYNC_V110 = 4         # ISDN非同期V.110
+    VIRTUAL = 5                 # 仮想接続（VPN等）
+    PIAFS = 6                   # PIAFS接続
+    HDLC_CLEAR_CHANNEL = 7      # HDLCクリアチャネル
+    X25 = 8                     # X.25接続
+    X75 = 9                     # X.75接続
+    G3_FAX = 10                 # G3ファックス
+    SDSL = 11                   # SDSL接続
+    ADSL_CAP = 12               # ADSL CAP接続
+    ADSL_DMT = 13               # ADSL DMT接続
+    IDSL = 14                   # IDSL接続
+    ETHERNET = 15               # イーサネット接続
+    XDSL = 16                   # xDSL接続
+    CABLE = 17                  # ケーブル接続
+    WIRELESS_OTHER = 18         # その他の無線接続
+    WIRELESS_802_11 = 19        # IEEE 802.11無線LAN
 
 
 class RadiusPacket:
-    """RADIUS packet structure"""
+    """RADIUSパケット構造体（RFC 2865準拠）
+    
+    【クラス説明】
+    RADIUSプロトコルの標準パケット形式を実装します。
+    パケットヘッダ（Code, Identifier, Length, Authenticator）と
+    可変長の属性リストで構成されます。
+    
+    【パケット構造】
+     0                   1                   2                   3
+     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |     Code      |  Identifier   |            Length             |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |                                                               |
+    |                         Authenticator                         |
+    |                                                               |
+    |                                                               |
+    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    |  Attributes ...
+    +-+-+-+-+-+-+-+-+-+-+-+-+-
+    """
     
     def __init__(self, code: RadiusCode, identifier: int = None, 
                  authenticator: bytes = None):
         """
-        Initialize RADIUS packet
+        RADIUSパケットを初期化
         
         Args:
-            code: RADIUS packet code
-            identifier: Packet identifier (0-255)
-            authenticator: 16-byte authenticator
+            code: RADIUSパケットコード（Access-Request等）
+            identifier: パケット識別子（0-255）
+            authenticator: 認証子（16バイト）。Noneの場合は自動生成
         """
-        self.code = code
-        self.identifier = identifier or random.randint(0, 255)
-        self.authenticator = authenticator or os.urandom(16)
-        self.attributes = []
+        self.code = code  # パケットコード
+        self.identifier = identifier or random.randint(0, 255)  # 識別子（自動生成）
+        self.authenticator = authenticator or os.urandom(16)  # 16バイト認証子
+        self.attributes = []  # 属性リスト
         
     def add_attribute(self, attr_type: int, value: bytes):
-        """Add attribute to packet"""
-        if len(value) > 253:  # Max attribute length
+        """パケットに属性を追加
+        
+        Args:
+            attr_type: RADIUS属性タイプ
+            value: 属性値（バイト列）
+            
+        Raises:
+            ValueError: 属性値が253バイトを超える場合
+        """
+        if len(value) > 253:  # 最大属性長（RFC 2865準拠）
             raise ValueError(f"Attribute too long: {len(value)} > 253")
         self.attributes.append((attr_type, value))
     
     def add_string(self, attr_type: int, value: str):
-        """Add string attribute"""
+        """文字列属性を追加
+        
+        Args:
+            attr_type: RADIUS属性タイプ
+            value: 文字列値（UTF-8でエンコード）
+        """
         self.add_attribute(attr_type, value.encode('utf-8'))
     
     def add_integer(self, attr_type: int, value: int):
-        """Add integer attribute"""
+        """整数属性を追加
+        
+        Args:
+            attr_type: RADIUS属性タイプ
+            value: 32ビット符号なし整数値
+        """
         self.add_attribute(attr_type, struct.pack('!I', value))
     
     def add_ipaddr(self, attr_type: int, ip: str):
-        """Add IP address attribute"""
+        """IPアドレス属性を追加
+        
+        Args:
+            attr_type: RADIUS属性タイプ
+            ip: IPアドレス（ドット記法文字列）
+            
+        Raises:
+            ValueError: 不正なIPアドレス形式の場合
+        """
         parts = ip.split('.')
         if len(parts) != 4:
             raise ValueError(f"Invalid IP address: {ip}")
@@ -133,10 +217,14 @@ class RadiusPacket:
         self.add_attribute(attr_type, ip_bytes)
     
     def add_eap_message(self, eap_data: bytes):
-        """
-        Add EAP-Message attribute (may fragment)
+        """EAP-Message属性を追加（必要に応じて分割）
         
-        Large EAP messages are split into multiple 253-byte attributes
+        【説明】
+        RFC 3579準拠のEAP-Message属性を追加します。
+        大きなEAPメッセージは253バイトの複数属性に分割されます。
+        
+        Args:
+            eap_data: EAPメッセージデータ
         """
         offset = 0
         while offset < len(eap_data):

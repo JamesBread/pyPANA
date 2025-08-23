@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
 """
+修正版pyPANA PaC と OpenPANA PAA 相互運用テスト
 Test script for fixed pyPANA PaC with OpenPANA PAA.
 This version sends a minimal RFC-compliant PCI without AVPs.
+
+【概要】
+pyPANA v2.3.0の修正により、OpenPANAとの相互運用性が改善されました。
+このテストでは、RFC 5191準拠の最小限のPCIメッセージ（AVPなし）を
+OpenPANA PAAに送信し、適切な応答を受信できることを確認します。
+
+【テスト内容】
+1. RFC準拠の最小限PCIメッセージ送信
+2. OpenPANA PAAからの応答受信確認
+3. プロトコル互換性の検証
+4. エラーハンドリングの確認
+
+【修正点】
+- PCI メッセージからAVPを削除（16バイトヘッダーのみ）
+- session_id = 0、seq_number = 0 に統一
+- フラグ設定の正規化（R-bit, S-bit）
 """
 
 import socket
@@ -16,7 +33,21 @@ from pana_messages import PANAMessage, AVP, FLAG_REQUEST, FLAG_START
 from pana_constants import *
 
 def test_minimal_pci():
-    """Send minimal PCI to OpenPANA PAA"""
+    """
+    最小限PCIメッセージをOpenPANA PAAに送信
+    Send minimal PCI to OpenPANA PAA
+    
+    【テスト手順】
+    1. RFC 5191準拠の最小限PCIメッセージ作成
+    2. OpenPANA PAA（127.0.0.1:716）への送信
+    3. PAR応答の受信と解析
+    4. プロトコル互換性の確認
+    
+    【期待動作】
+    - PCI送信後、PAAからPARメッセージを受信
+    - エラーや例外が発生しないこと
+    - OpenPANAとのプロトコル互換性確認
+    """
     
     # Create minimal PCI (16 bytes, no AVPs)
     pci = PANAMessage()
