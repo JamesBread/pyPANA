@@ -205,8 +205,10 @@ class PANAAuthAgent:
                 # スタンドアロンモード: EAP-TLSを直接処理
                 self.logger.debug("Creating EAP-TLS handler for standalone mode")
                 handler = create_eap_tls_handler(is_server=True)
+                # ハンドラーの初期状態を確実にSTARTに設定
+                handler.state = 'START'
                 session.set_eap_handler(handler)
-                self.logger.debug("EAP-TLS handler created and set")
+                self.logger.debug(f"EAP-TLS handler created and set, state: {handler.state}")
             else:
                 # RADIUSプロキシモード: EAP処理はRADIUSサーバーに委譲
                 self.logger.debug("RADIUS proxy mode - no local EAP handler")
@@ -232,8 +234,11 @@ class PANAAuthAgent:
         self.logger.debug("Creating EAP-Request/Identity")
         try:
             if self.radius_client is None:
-                eap_req = session.eap_handler.process_eap_message(b'')
-                self.logger.debug(f"EAP-Request created: {len(eap_req) if eap_req else 0} bytes")
+                # 明示的にEAP-Request/Identityを作成して一貫性を保つ
+                # これにより、すべての環境で同じ動作を保証
+                eap_req = struct.pack('!BBH', 1, session.eap_identifier, 5) + bytes([1])  # EAP-Request/Identity
+                session.eap_identifier = (session.eap_identifier + 1) % 256
+                self.logger.debug(f"EAP-Request/Identity created: {len(eap_req) if eap_req else 0} bytes")
             else:
                 eap_req = struct.pack('!BBH', EAP_REQUEST, session.eap_identifier, 5) + bytes([EAP_TYPE_IDENTITY])
                 session.eap_identifier += 1

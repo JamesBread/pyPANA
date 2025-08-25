@@ -64,13 +64,17 @@ class PANAClient:
         self.server_addr = server_addr
         self.server_port = server_port
         
+        # ロギング設定（早期に設定）
+        self.logger = logging.getLogger('PANA-Client')
+        
+        # 適切なローカルIPアドレスを決定
+        local_ip = self._determine_local_ip()
+        
         # UDPソケットの作成と任意のポートへのバインド
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind(('', 0))  # OSが空きポートを自動割り当て
+        self.socket.bind((local_ip, 0))  # 適切なローカルIPにバインド
         local_addr, local_port = self.socket.getsockname()
         
-        # ロギング設定
-        self.logger = logging.getLogger('PANA-Client')
         self.logger.info(f"Client socket bound to {local_addr}:{local_port}")
         
         # セッション管理変数の初期化
@@ -351,6 +355,10 @@ class PANAClient:
             if self.session_id == 0 and msg.session_id != 0:
                 self.session_id = msg.session_id
                 self.logger.info(f"Session ID assigned by PAA: 0x{self.session_id:08x}")
+                
+                # Remove PCI (seq=0) from retransmission queue since PAA responded
+                self.retransmit_mgr.remove_message(0)
+                self.logger.debug("Removed PCI from retransmission queue")
             
             # RFC 5191 Section 5.2: Initialize random sequence number after PCI
             if not self.seq_number_initialized:
@@ -848,6 +856,25 @@ class PANAClient:
         self.socket.close()
         self.monitor.stop()
         self.statistics.stop()
+    
+    def _determine_local_ip(self):
+        """
+        サーバーと通信するための適切なローカルIPアドレスを決定
+        
+        Returns:
+            str: ローカルIPアドレス（決定できない場合は''で全インターフェース）
+        """
+        try:
+            # サーバーへの接続を試みて、使用されるローカルIPを取得
+            test_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            test_socket.connect((self.server_addr, self.server_port))
+            ip_address = test_socket.getsockname()[0]
+            test_socket.close()
+            self.logger.debug(f"Determined local IP for server {self.server_addr}: {ip_address}")
+            return ip_address
+        except Exception as e:
+            self.logger.warning(f"Could not determine specific local IP, using all interfaces: {e}")
+            return ''  # フォールバック: 全インターフェースにバインド
     
     def _get_current_ip(self):
         """

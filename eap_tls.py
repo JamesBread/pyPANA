@@ -596,6 +596,35 @@ class EAPTLSHandler:
                     response += bytes([EAP_TYPE_IDENTITY]) + identity
                     self.state = 'IDENTITY_SENT'
                     return response
+                # サーバーが直接EAP-TLS Startを送信する場合（Identityをスキップ）
+                elif len(eap_data) >= 6 and eap_data[4] == EAP_TYPE_TLS:
+                    flags = eap_data[5]
+                    if flags & EAP_TLS_FLAG_START:
+                        self.logger.info("Server sent EAP-TLS Start directly (skipping Identity)")
+                        self.state = 'TLS_HANDSHAKE'
+                        # TLSハンドシェイクを初期化
+                        self._handle_tls_handshake()
+                        
+                        # ハンドシェイクを開始
+                        try:
+                            self.sslobj.do_handshake()
+                        except ssl.SSLWantReadError:
+                            pass  # データ待ちは正常
+                            
+                        # Client Helloを取得
+                        tls_data = self.outgoing.read()
+                        if tls_data:
+                            self.tls_data = tls_data
+                            # EAP-TLSレスポンスを作成（Client Hello含む）
+                            # Length fieldを含む場合
+                            flags = EAP_TLS_FLAG_LENGTH
+                            length_bytes = struct.pack('!I', len(tls_data))
+                            return self._create_eap_tls_packet(
+                                EAP_RESPONSE,
+                                identifier,
+                                flags,
+                                length_bytes + tls_data
+                            )
                     
             elif self.is_server:
                 # サーバーはIdentityリクエストの送信から開始
