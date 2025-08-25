@@ -304,6 +304,7 @@ class EAPTLSHandler:
         self.is_server = is_server  # サーバー/クライアントモード
         self.state = 'START'  # ステートマシンの初期状態
         self.identifier = 0  # EAP識別子
+        self.eap_identifier = 0  # サーバー用のEAP識別子カウンター
         
         # 鍵マテリアル
         self.msk = None  # Master Session Key
@@ -637,7 +638,9 @@ class EAPTLSHandler:
                 # サーバーがIdentityレスポンスを受信、EAP-TLSを開始
                 self.state = 'TLS_START'
                 # EAP-TLS Startを送信
-                return self._create_eap_tls_packet(EAP_REQUEST, identifier + 1, EAP_TLS_FLAG_START)
+                # サーバー側は自身のidentifier管理を使用
+                self.eap_identifier = (identifier + 1) % 256
+                return self._create_eap_tls_packet(EAP_REQUEST, self.eap_identifier, EAP_TLS_FLAG_START)
                 
         elif self.state == 'IDENTITY_SENT' and not self.is_server:
             if code == EAP_REQUEST and len(eap_data) >= 6 and eap_data[4] == EAP_TYPE_TLS:
