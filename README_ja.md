@@ -5,8 +5,8 @@
 
 RFC5191で定義されたPANA（Protocol for carrying Authentication for Network Access）の完全なPython実装です。完全なEAP-TLS認証サポートを含み、OpenSSL 3.xに対応しています。
 
-> **🎉 v2.3.0 リリース (2025-08-21) - 完全なRFC 5191準拠達成**  
-> **📝 ドキュメント更新: 2025-08-22**
+> **🎉 v2.3.1 リリース (2025-08-26) - RFC 5191完全準拠とテストスイート強化**  
+> **📝 ドキュメント更新: 2025-08-26**
 > 
 > **✅ すべての主要問題を解決:**
 > - ✅ **PyOpenSSL MSKエクスポート**: `export_keying_material()`による適切な鍵導出
@@ -14,7 +14,13 @@ RFC5191で定義されたPANA（Protocol for carrying Authentication for Network
 > - ✅ **OpenPANA互換性**: プロトコルレベルの問題を修正
 > - ✅ **包括的テスト**: すべてのテストが成功
 > 
-> **🔧 適用された主要修正:**
+> **🔧 v2.3.1での追加修正:**
+> - PCIメッセージフラグ: RFC 5191 Section 7.1準拠でフラグ=0x0000 ✅
+> - EAP-TLSパケット長: 正確な6バイトベース長計算 ✅
+> - テストスイート強化: 15個のアクティブテスト全て成功 ✅
+> - ドキュメント更新: 包括的なテストドキュメント追加 ✅
+> 
+> **v2.3.0の主要修正:**
 > - PCIメッセージ: 16バイトヘッダーのみ（AVPなし）✅
 > - Nonce長: RFC 5191準拠の20バイト ✅
 > - AUTH AVP: SHA1_160で20バイト ✅
@@ -281,14 +287,14 @@ python3 main.py pac SERVER_IP [オプション]
 
 ## プロトコル概要
 
-### メッセージフロー
+### RFC 5191準拠メッセージフロー
 
 ```
 PaC（クライアント）                    PAA（サーバー）
      |                              |
-     |------- PCI (Start) --------->|
+     |------- PCI (flags=0x0000) -->|  # RFC 5191 Section 7.1: PCIはフラグなし
      |                              |
-     |<------ PAR (EAP-Req/Id) -----|
+     |<------ PAR (R|S, nonce) -----|  # 初期PAR: R|Sフラグ、20バイトnonce
      |                              |
      |------- PAN (EAP-Resp/Id) --->|
      |                              |
@@ -852,7 +858,6 @@ pyPANAはPANAプロトコルの中核機能を実装していますが、現在�
 - **メッセージ長**: 厳密な強制ではなくソフトな処理（宣言された長さを超えるメッセージは切り詰められるが拒否されない）
 
 ### メッセージフロー
-- **Startフラグの使用**: PCIが誤ってStartビットを設定（RFC5191では初期PAR/PANのみが持つべき）
 - **セッションID検証**: PCIがsession_id=0、他のメッセージが非ゼロ値を使用することの検証なし
 - **Nonce AVP**: Sビット付き初期PANA-Auth交換での必須検証が未実装
 - **アルゴリズムAVP**: 初期交換時のPRF-AlgorithmとIntegrity-Algorithm AVPの必須検証が未実装
@@ -867,17 +872,19 @@ pyPANAはPANAプロトコルの中核機能を実装していますが、現在�
 テストスイートは必要な動作確認テストのみに再編成されました：
 
 ```bash
-# すべての必要なテストを実行（13テスト）
+# すべての必要なテストを実行（15テスト）
 python3 run_tests.py
 
 # コア互換性テストを実行
-python3 tests/test_compatibility.py      # v2.3.0メイン互換性テスト
-python3 tests/test_protocol_flow.py      # プロトコルメッセージ形式テスト
-python3 tests/test_simple_auth.py        # シンプル認証フロー
+python3 tests/test_compatibility_fixed.py # v2.3.1改善版互換性テスト（スレッド使用）
+python3 tests/test_compatibility.py       # v2.3.0メイン互換性テスト
+python3 tests/test_protocol_flow.py       # プロトコルメッセージ形式テスト（PCI flags=0x0000）
+python3 tests/test_simple_auth.py         # シンプル認証フロー
 
 # RFC準拠テストを実行
-python3 tests/test_rfc6786_compliance.py # RFC 6786 AVP暗号化準拠
-python3 tests/test_crypto_algorithms.py  # 暗号アルゴリズム検証
+python3 tests/test_rfc_compliance_fixes.py # RFC 5191/6786準拠性修正テスト（新規）
+python3 tests/test_rfc6786_compliance.py  # RFC 6786 AVP暗号化準拠
+python3 tests/test_crypto_algorithms.py   # 暗号アルゴリズム検証
 
 # 相互運用性テストを実行
 python3 tests/test_openpana_fixed.py     # OpenPANA互換性テスト
@@ -891,10 +898,11 @@ python3 tests/test_eap_fragmentation.py  # EAPフラグメンテーション
 ```
 
 **テスト構成:**
-- **13個の必要なテスト** `tests/`内 - RFC準拠修正後すべて成功 ✅
-- **RFC準拠テスト** - メッセージフォーマット、AVP配置、長さ計算の検証追加
-- **27個の古いテスト** `tests/outdated/`内 - RFC 6786暗号化、未実装機能
-- 詳細なテストドキュメントは`tests/README.md`を参照
+- **15個のアクティブテスト** `tests/`内 - v2.3.1修正後すべて成功 ✅
+- **RFC準拠テスト** - メッセージフォーマット、AVP配置、長さ計算、PCIフラグの検証追加
+- **包括的なテストドキュメント** - `tests/TEST_DOCUMENTATION.md`で全テストの詳細説明
+- **個別テストドキュメント** - TEST_*.mdファイルで各テストの詳細
+- 詳細は`tests/README.md`と`tests/TEST_CATEGORIZATION.md`を参照
 
 ### 貢献
 

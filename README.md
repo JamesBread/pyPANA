@@ -6,8 +6,9 @@
 
 A complete Python implementation of the Protocol for carrying Authentication for Network Access (PANA) as defined in RFC 5191 and RFC 6786. This implementation includes full EAP-TLS authentication support, AVP encryption capabilities, and is compatible with OpenSSL 3.x.
 
-> **🎉 v2.3.0 Release (2025-08-21) - COMPLETE RFC 5191 COMPLIANCE**  
-> **📝 Documentation updated: 2025-08-22**
+> **🎉 v2.3.0 Release (2025-08-26) - COMPLETE RFC 5191 COMPLIANCE**  
+> **📝 Documentation updated: 2025-08-26**  
+> **🔧 PCI Flags Fixed: Now correctly set to 0x0000 per RFC 5191 Section 7.1**
 > 
 > **✅ All Major Issues Resolved:**
 > - ✅ **PyOpenSSL MSK Export**: Proper key derivation via `export_keying_material()`
@@ -16,11 +17,12 @@ A complete Python implementation of the Protocol for carrying Authentication for
 > - ✅ **Comprehensive Testing**: All tests passing
 > 
 > **🔧 Key Fixes Applied:**
-> - PCI message: 16-byte header only (no AVPs) ✅
-> - Nonce length: 20 bytes per RFC 5191 ✅
+> - PCI message: 16-byte header only (no AVPs, flags=0x0000) ✅
+> - Nonce exchange: After S-bit messages (RFC 5191 timing) ✅
 > - AUTH AVP: 20 bytes with SHA1_160 ✅
 > - Default algorithms: SHA1 (RFC mandatory) ✅
 > - I_PAR/I_PAN storage: Fixed for proper key derivation ✅
+> - EAP-TLS packet length: Fixed for proper flag field handling ✅
 > 
 > **📊 Current Status:**
 > - **pyPANA ↔ pyPANA**: ✅ Full authentication working
@@ -301,35 +303,74 @@ Options:
 
 ## Protocol Overview
 
-### Message Flow
+### Message Flow (RFC 5191 Compliant)
 
 ```
-PaC (Client)                    PAA (Server)
-     |                              |
-     |------- PCI (Start) --------->|
-     |                              |
-     |<------ PAR (EAP-Req/Id) -----|
-     |                              |
-     |------- PAN (EAP-Resp/Id) --->|
-     |                              |
-     |<------ PAR (EAP-TLS) --------|
-     |                              |
-     |------- PAN (EAP-TLS) ------->|
-     |         ...                  |
-     |<------ PAR (EAP-Success) ----|
-     |                              |
-     |------- PAN (Complete) ------>|
-     |                              |
-     |        [Authenticated]       |
+PaC (Client)                    PAA (Server)                 [RADIUS]
+     |                              |                            |
+     |---- PCI (flags=0x0000) ----->|  Discovery                |
+     |     Session-ID=0, Seq=0     |                            |
+     |                              |                            |
+     |<--- PAR (flags=0xc000) ------|  Initial Exchange         |
+     |     R|S bits, Session-ID=X  |                            |
+     |     PRF/Integrity Algorithms|                            |
+     |                              |                            |
+     |---- PAN (flags=0x4000) ----->|  Algorithm Selection      |
+     |     S bit, echo Session-ID  |                            |
+     |     Selected Algorithms     |                            |
+     |                              |                            |
+     |<--- PAR (flags=0x8000) ------|  Nonce + EAP Start        |
+     |     R bit, Nonce(PAA)       |                            |
+     |     EAP-Request/Identity    |                            |
+     |                              |                            |
+     |---- PAN (flags=0x0000) ----->|  Nonce + Identity         |
+     |     Nonce(PaC)              |------Access-Request------->|
+     |     EAP-Response/Identity   |                            |
+     |                              |                            |
+     |<--- PAR (flags=0x8000) ------|<-----Access-Challenge-----|
+     |     EAP-Request/TLS Start   |                            |
+     |                              |                            |
+     |---- PAN (flags=0x0000) ----->|  TLS ClientHello          |
+     |     EAP-Response/TLS        |------Access-Request------->|
+     |                              |                            |
+     |<--- PAR (flags=0x8000) ------|<-----Access-Challenge-----|
+     |     TLS ServerHello, Cert   |                            |
+     |                              |                            |
+     |---- PAN (flags=0x0000) ----->|  TLS ClientKeyExchange    |
+     |     TLS Finished            |------Access-Request------->|
+     |                              |                            |
+     |<--- PAR (flags=0xa000) ------|<-----Access-Accept--------|
+     |     R|C bits, EAP-Success   |                            |
+     |     Result-Code(0)          |  MSK derived from TLS      |
+     |     Key-ID, AUTH AVP        |                            |
+     |                              |                            |
+     |---- PAN (flags=0x2000) ----->|  Complete                 |
+     |     C bit, echo Key-ID      |                            |
+     |     AUTH AVP                |                            |
+     |                              |                            |
+     |        [OPEN State]          |        [OPEN State]        |
 ```
+
+#### Flag Definitions
+- **R bit (0x8000)**: Request flag - Set in PAR messages
+- **S bit (0x4000)**: Start flag - Set in initial PAR/PAN
+- **C bit (0x2000)**: Complete flag - Set in final PAR/PAN
+- **PCI has NO flags**: flags=0x0000 per RFC 5191 Section 7.1
 
 ### Message Types
 
-- **PCI**: PANA-Client-Initiation - Starts the authentication process
-- **PAR/PAN**: PANA-Auth-Request/Answer - Carries EAP payloads
-- **PNR/PNA**: PANA-Notification-Request/Answer - Keep-alive and notifications
-- **PRR/PRA**: PANA-Reauth-Request/Answer - Session re-authentication
-- **PTR/PTA**: PANA-Termination-Request/Answer - Session termination
+- **PCI (Type 1)**: PANA-Client-Initiation - Discovery message (16 bytes, no AVPs, flags=0)
+- **PAR/PAN (Type 2)**: PANA-Auth-Request/Answer - Main authentication messages
+- **PTR/PTA (Type 3)**: PANA-Termination-Request/Answer - Session termination
+- **PNR/PNA (Type 4)**: PANA-Notification-Request/Answer - Keepalive and re-auth triggers
+
+### Key Protocol Requirements (RFC 5191)
+
+1. **PCI Format**: Exactly 16 bytes (header only), flags MUST be 0, session_id=0, seq=0
+2. **Nonce Exchange**: Occurs after initial S-bit messages, not in PCI
+3. **I_PAR/I_PAN Storage**: Initial messages with S-bit stored for key derivation
+4. **AUTH AVP**: Required on all messages after authentication completes
+5. **Key-ID Echo**: PaC must echo the Key-ID in final PAN
 
 ## Advanced Usage
 

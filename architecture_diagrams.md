@@ -62,7 +62,7 @@ graph TB
 
 ## PANA Protocol Message Flow
 
-### Complete Authentication Flow
+### Complete Authentication Flow (RFC 5191 Compliant)
 
 ```mermaid
 sequenceDiagram
@@ -71,17 +71,17 @@ sequenceDiagram
     participant RADIUS as RADIUS Server<br/>(Optional)
     
     Note over PaC,PAA: Phase 1: Discovery and Initiation
-    PaC->>PAA: PCI (PANA-Client-Initiation)<br/>session_id=0, no AVPs
+    PaC->>PAA: PCI (flags=0x0000)<br/>Session-ID=0, Seq=0, No AVPs
     
-    Note over PaC,PAA: Phase 2: Handshake
-    PAA->>PaC: PAR (S-bit, algorithms, nonce)
-    Note right of PAA: Store I_PAR for key derivation
-    PaC->>PAA: PAN (S-bit, selected algorithms, nonce)
-    Note left of PaC: Store I_PAN for key derivation
+    Note over PaC,PAA: Phase 2: Initial Handshake
+    PAA->>PaC: PAR (flags=0xc000, R|S bits)<br/>PRF/Integrity Algorithms
+    Note right of PAA: Store as I_PAR
+    PaC->>PAA: PAN (flags=0x4000, S bit)<br/>Selected Algorithms
+    Note left of PaC: Store as I_PAN
     
-    Note over PaC,PAA: Phase 3: EAP Authentication
-    PAA->>PaC: PAR (EAP-Request/Identity)
-    PaC->>PAA: PAN (EAP-Response/Identity)
+    Note over PaC,PAA: Phase 3: Nonce Exchange + EAP
+    PAA->>PaC: PAR (flags=0x8000, R bit)<br/>Nonce(PAA), EAP-Request/Identity
+    PaC->>PAA: PAN (flags=0x0000)<br/>Nonce(PaC), EAP-Response/Identity
     
     opt RADIUS Backend
         PAA->>RADIUS: Access-Request
@@ -89,15 +89,15 @@ sequenceDiagram
     end
     
     loop EAP-TLS Handshake
-        PAA->>PaC: PAR (EAP-Request/TLS)
-        PaC->>PAA: PAN (EAP-Response/TLS)
+        PAA->>PaC: PAR (flags=0x8000, R bit)<br/>EAP-Request/TLS
+        PaC->>PAA: PAN (flags=0x0000)<br/>EAP-Response/TLS
     end
     
-    Note over PaC,PAA: Phase 4: Key Derivation
-    PAA->>PaC: PAR (C-bit, EAP-Success, AUTH AVP)
+    Note over PaC,PAA: Phase 4: Completion
+    PAA->>PaC: PAR (flags=0xa000, R|C bits)<br/>EAP-Success, Key-ID, AUTH AVP
     Note right of PAA: MSK → PANA_AUTH_KEY
-    PaC->>PAA: PAN (C-bit, AUTH AVP)
-    Note left of PaC: MSK → PANA_AUTH_KEY
+    PaC->>PAA: PAN (flags=0x2000, C bit)<br/>Key-ID, AUTH AVP
+    Note left of PaC: Verify AUTH, derive keys
     
     Note over PaC,PAA: Phase 5: Authenticated State
     PaC-->>PAA: PANA-Notification (Ping)

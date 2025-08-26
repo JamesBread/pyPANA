@@ -217,3 +217,5 @@ request/
 rfc/
 pypana.json
 
+.DS_Store
+*.pcapng

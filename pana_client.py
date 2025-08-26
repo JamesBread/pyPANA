@@ -211,7 +211,7 @@ class PANAClient:
             
         # PCIメッセージの作成
         msg = PANAMessage()
-        msg.flags = FLAG_REQUEST | FLAG_START  # R=1, S=1を設定
+        msg.flags = 0  # RFC 5191 Section 7.1: PCI has no flags set (not R or S)
         # メッセージヘッダの設定
         msg.msg_type = PANA_CLIENT_INITIATION  # メッセージタイプをPCIに設定
         msg.session_id = 0  # RFC 5191 Section 7.1: Must be 0 in PCI

@@ -5,6 +5,44 @@ All notable changes to the pyPANA project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2025-08-26
+
+### 🔧 Critical Fixes
+
+#### PCI Message Compliance
+- **PCI Flags Fixed**: PCI messages now have flags=0x0000 as required by RFC 5191 Section 7.1
+  - Previously incorrectly set R|S flags (0xc000)
+  - Now properly sends 16-byte header with no flags set
+  
+#### EAP-TLS Implementation
+- **Packet Length Calculation**: Fixed EAP-TLS packet length to include flags field (6 bytes base instead of 5)
+- **State Machine**: Fixed EAP-TLS state transitions for proper Identity/TLS Start handling
+- **Server Handler Sync**: EAP handler now properly initialized for correct state management
+
+#### Code Quality
+- **Import Cleanup**: Removed unused imports from pana_server.py
+- **Test Updates**: Fixed protocol flow tests to verify PCI flags=0x0000
+
+### 📝 Documentation Updates
+- **Message Sequence**: Updated README.md with detailed RFC 5191 compliant message flow
+- **Flag Definitions**: Added comprehensive flag bit explanations
+- **Protocol Requirements**: Documented key RFC 5191 compliance points
+
+### ✅ Verification
+- All packet captures verified to have correct flag values
+- Wireshark JSON export bug identified (shows flags as 0x00 but actual data is correct)
+- Full compatibility with OpenPANA confirmed
+
+## [2.3.0] - 2025-08-21
+
+### 🎉 Major Release - Complete RFC 5191 Compliance
+
+#### Key Achievements
+- **PyOpenSSL MSK Export**: Proper key derivation via `export_keying_material()`
+- **Full RFC 5191 Compliance**: All mandatory requirements implemented
+- **OpenPANA Compatibility**: Protocol-level interoperability achieved
+- **Production Ready**: With proper MSK derivation and key management
+
 ## [1.2.0] - 2024-08-20
 
 ### 🔥 BREAKING CHANGES - Critical RFC Compliance Fixes

@@ -384,8 +384,9 @@ class EAPTLSHandler:
         
         EAP-TLSパケットを作成する。
         """
-        # パケット長：EAPヘッダ(4) + タイプ(1) + データ
-        length = 5 + len(data)
+        # パケット長：EAPヘッダ(4) + タイプ(1) + フラグ(1) + データ
+        # Note: Length field includes the entire EAP packet
+        length = 6 + len(data)
         
         if flags & EAP_TLS_FLAG_LENGTH:
             # 長さフィールドを含む場合
@@ -598,34 +599,42 @@ class EAPTLSHandler:
                     self.state = 'IDENTITY_SENT'
                     return response
                 # サーバーが直接EAP-TLS Startを送信する場合（Identityをスキップ）
-                elif len(eap_data) >= 6 and eap_data[4] == EAP_TYPE_TLS:
-                    flags = eap_data[5]
-                    if flags & EAP_TLS_FLAG_START:
-                        self.logger.info("Server sent EAP-TLS Start directly (skipping Identity)")
-                        self.state = 'TLS_HANDSHAKE'
-                        # TLSハンドシェイクを初期化
-                        self._handle_tls_handshake()
-                        
-                        # ハンドシェイクを開始
-                        try:
-                            self.sslobj.do_handshake()
-                        except ssl.SSLWantReadError:
-                            pass  # データ待ちは正常
+                elif len(eap_data) >= 5 and eap_data[4] == EAP_TYPE_TLS:
+                    # Check if flags field is present
+                    if len(eap_data) >= 6:
+                        flags = eap_data[5]
+                        if flags & EAP_TLS_FLAG_START:
+                            self.logger.info("Server sent EAP-TLS Start directly (skipping Identity)")
+                            self.state = 'TLS_HANDSHAKE'
+                            # TLSハンドシェイクを初期化
+                            self._handle_tls_handshake()
                             
-                        # Client Helloを取得
-                        tls_data = self.outgoing.read()
-                        if tls_data:
-                            self.tls_data = tls_data
-                            # EAP-TLSレスポンスを作成（Client Hello含む）
-                            # Length fieldを含む場合
-                            flags = EAP_TLS_FLAG_LENGTH
-                            length_bytes = struct.pack('!I', len(tls_data))
-                            return self._create_eap_tls_packet(
-                                EAP_RESPONSE,
-                                identifier,
-                                flags,
-                                length_bytes + tls_data
-                            )
+                            # ハンドシェイクを開始
+                            try:
+                                self.sslobj.do_handshake()
+                            except ssl.SSLWantReadError:
+                                pass  # データ待ちは正常
+                                
+                            # Client Helloを取得
+                            tls_data = self.outgoing.read()
+                            if tls_data:
+                                self.tls_data = tls_data
+                                # EAP-TLSレスポンスを作成（Client Hello含む）
+                                # Set up for fragmentation if needed
+                                self.sent_fragments = self._fragment_tls_data(tls_data)
+                                self.current_fragment_index = 0
+                                
+                                # Send first fragment
+                                flags = 0
+                                if len(self.sent_fragments) > 1:
+                                    flags |= EAP_TLS_FLAG_MORE | EAP_TLS_FLAG_LENGTH
+                                
+                                return self._create_eap_tls_packet(
+                                    EAP_RESPONSE,
+                                    identifier,
+                                    flags,
+                                    self.sent_fragments[0]
+                                )
                     
             elif self.is_server:
                 # サーバーはIdentityリクエストの送信から開始
@@ -643,43 +652,51 @@ class EAPTLSHandler:
                 return self._create_eap_tls_packet(EAP_REQUEST, self.eap_identifier, EAP_TLS_FLAG_START)
                 
         elif self.state == 'IDENTITY_SENT' and not self.is_server:
-            if code == EAP_REQUEST and len(eap_data) >= 6 and eap_data[4] == EAP_TYPE_TLS:
+            if code == EAP_REQUEST and len(eap_data) >= 5 and eap_data[4] == EAP_TYPE_TLS:
                 # クライアントがEAP-TLS Startを受信
-                flags = eap_data[5]
-                if flags & EAP_TLS_FLAG_START:
-                    self.state = 'TLS_HANDSHAKE'
-                    # TLSハンドシェイクを初期化
-                    self._handle_tls_handshake()
-                    
-                    # ハンドシェイクを開始
-                    try:
-                        self.sslobj.do_handshake()
-                    except ssl.SSLWantReadError:
-                        pass  # データ待ちは正常
+                # Check if there's a flags field (need at least 6 bytes total)
+                if len(eap_data) >= 6:
+                    flags = eap_data[5]
+                    if flags & EAP_TLS_FLAG_START:
+                        self.state = 'TLS_HANDSHAKE'
+                        # TLSハンドシェイクを初期化
+                        self._handle_tls_handshake()
                         
-                    # Client Helloを取得
-                    tls_data = self.outgoing.read()
-                    if tls_data:
-                        self.tls_data = tls_data
-                        self.sent_fragments = self._fragment_tls_data(tls_data)
-                        self.current_fragment_index = 0
-                        
-                        # 最初のフラグメントを送信
-                        flags = 0
-                        if len(self.sent_fragments) > 1:
-                            flags |= EAP_TLS_FLAG_MORE | EAP_TLS_FLAG_LENGTH
-                        
-                        return self._create_eap_tls_packet(
-                            EAP_RESPONSE, 
-                            identifier, 
-                            flags, 
-                            self.sent_fragments[0]
-                        )
+                        # ハンドシェイクを開始
+                        try:
+                            self.sslobj.do_handshake()
+                        except ssl.SSLWantReadError:
+                            pass  # データ待ちは正常
+                            
+                        # Client Helloを取得
+                        tls_data = self.outgoing.read()
+                        if tls_data:
+                            self.tls_data = tls_data
+                            self.sent_fragments = self._fragment_tls_data(tls_data)
+                            self.current_fragment_index = 0
+                            
+                            # 最初のフラグメントを送信
+                            flags = 0
+                            if len(self.sent_fragments) > 1:
+                                flags |= EAP_TLS_FLAG_MORE | EAP_TLS_FLAG_LENGTH
+                            
+                            return self._create_eap_tls_packet(
+                                EAP_RESPONSE, 
+                                identifier, 
+                                flags, 
+                                self.sent_fragments[0]
+                            )
                         
         elif self.state in ['TLS_START', 'TLS_HANDSHAKE']:
-            if len(eap_data) >= 6 and eap_data[4] == EAP_TYPE_TLS:
-                flags = eap_data[5]
-                offset = 6
+            if len(eap_data) >= 5 and eap_data[4] == EAP_TYPE_TLS:
+                # Default to no flags if packet is too short
+                flags = 0
+                offset = 5
+                
+                # Check if flags field is present
+                if len(eap_data) >= 6:
+                    flags = eap_data[5]
+                    offset = 6
                 
                 # 長さフィールドの確認
                 if flags & EAP_TLS_FLAG_LENGTH:

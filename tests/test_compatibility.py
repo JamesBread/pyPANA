@@ -57,14 +57,18 @@ def test_pypana():
         text=True
     )
     
-    # Collect output for 5 seconds
-    time.sleep(5)
+    # Collect output for 8 seconds (allow more time for authentication)
+    time.sleep(8)
     
     # Terminate processes
     pac_proc.terminate()
     paa_proc.terminate()
     
-    # Get output
+    # Wait for processes to finish and get output
+    pac_proc.wait(timeout=2)
+    paa_proc.wait(timeout=2)
+    
+    # Read all remaining output
     pac_output = pac_proc.stdout.read() if pac_proc.stdout else ""
     paa_output = paa_proc.stdout.read() if paa_proc.stdout else ""
     

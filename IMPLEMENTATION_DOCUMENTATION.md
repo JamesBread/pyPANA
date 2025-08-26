@@ -23,19 +23,19 @@ pyPANA is a comprehensive Python implementation of the Protocol for carrying Aut
 - **Enterprise Integration**: RADIUS backend support for external authentication
 - **Production Ready**: Rate limiting, monitoring, statistics collection, and error recovery
 - **Modular Architecture**: Clean separation of concerns with 25+ specialized modules
-- **Comprehensive Testing**: 30+ test files covering unit, integration, and interoperability
+- **Comprehensive Testing**: 15 active test files with full RFC compliance coverage
 
-### Current Implementation Status (v2.3.0)
+### Current Implementation Status (v2.3.1)
 
 #### ✅ Fully Implemented
 - **Core PANA Protocol (RFC 5191)**
-  - All message types: PCI, PAR/PAN, PTR/PTA, PNR/PNA
+  - All message types: PCI (flags=0x0000), PAR/PAN, PTR/PTA, PNR/PNA
   - Complete state machines for both PaC and PAA
   - Correct 16-byte header format with all required fields
-  - Proper AVP structure and parsing
-  - Message authentication with AUTH AVP
+  - Proper AVP structure and parsing (16-bit fields)
+  - Message authentication with AUTH AVP (SHA1-160, 20 bytes)
   - Session lifetime management
-  - Re-authentication support
+  - Re-authentication support via PANA-Notification (A-bit)
 
 - **Security Features (RFC 6786)**
   - AES-128-CTR encryption for sensitive AVPs
@@ -46,9 +46,10 @@ pyPANA is a comprehensive Python implementation of the Protocol for carrying Aut
 
 - **EAP-TLS Authentication**
   - Complete PyOpenSSL-based implementation
-  - RFC 5705 compliant key export
-  - Proper MSK/EMSK derivation
+  - RFC 5705 compliant key export ("client EAP encryption" label)
+  - Proper MSK/EMSK derivation (64 bytes each)
   - Certificate validation and chain verification
+  - Correct EAP-TLS packet length calculation (6-byte base)
 
 - **Enterprise Features**
   - RADIUS proxy mode for external authentication
@@ -59,7 +60,7 @@ pyPANA is a comprehensive Python implementation of the Protocol for carrying Aut
 
 #### ⚠️ Partially Implemented
 - **Fragmentation**: Basic support, disabled per RFC 5191 Section 5.1
-- **OpenPANA Interoperability**: Message exchange works, some compatibility quirks remain
+- **OpenPANA Interoperability**: Protocol-level compatible (v2.3.1 fixes applied)
 
 #### ❌ Not Implemented
 - **Additional EAP Methods**: Only EAP-TLS currently supported
@@ -336,29 +337,64 @@ reply = radius_client.SendPacket(req)
 
 ## Testing and Verification
 
+### Test Suite Overview (v2.3.1)
+
+The test suite consists of 15 active tests organized into five categories:
+
 ### Test Categories
 
-1. **Unit Tests**: Individual module testing
-2. **Integration Tests**: End-to-end protocol flows
-3. **RFC Compliance Tests**: Standard conformance verification
-4. **Interoperability Tests**: OpenPANA compatibility
-5. **Performance Tests**: Load and stress testing
-6. **Security Tests**: Vulnerability assessment
+1. **Core Compatibility Tests (5 tests)**
+   - `test_compatibility.py` - Basic pyPANA ↔ pyPANA compatibility
+   - `test_compatibility_fixed.py` - Enhanced with threading and better diagnostics
+   - `test_protocol_flow.py` - RFC 5191 message format validation (PCI flags=0x0000)
+   - `test_simple_auth.py` - Basic authentication flow without EAP-TLS complexity
+   - `test_e2e.py` - End-to-end testing with complete flows
+
+2. **OpenPANA Interoperability Tests (3 tests)**
+   - `test_openpana_fixed.py` - OpenPANA compatibility with v2.3.1 fixes
+   - `test_pypana_paa_openpana.py` - PAA server for OpenPANA PaC testing
+   - `test_pypana_complete.py` - Complete pyPANA authentication testing
+
+3. **Cryptographic Tests (3 tests)**
+   - `test_auth_avp.py` - AUTH AVP calculation and verification
+   - `test_crypto_algorithms.py` - Algorithm implementation verification
+   - `test_avp_format.py` - AVP structure and padding validation
+
+4. **RFC Compliance Tests (3 tests)**
+   - `test_rfc_compliance_fixes.py` - RFC 5191/6786 compliance validation (NEW)
+   - `test_rfc6786_compliance.py` - RFC 6786 encryption compliance
+   - `test_rfc_compliant_reauth.py` - Re-authentication flow compliance
+
+5. **Integration Test (1 test)**
+   - `test_pana.py` - Basic PANA protocol integration
 
 ### Running Tests
 
 ```bash
-# Run all essential tests
+# Run all 15 active tests
 python3 run_tests.py
 
-# Run specific test suites
-python3 tests/test_compatibility.py      # v2.3.0 compatibility
-python3 tests/test_protocol_flow.py      # Protocol messages
-python3 tests/test_rfc6786_compliance.py # Encryption tests
+# Run enhanced compatibility test (v2.3.1)
+python3 tests/test_compatibility_fixed.py
 
-# Run with coverage
-pytest tests/ --cov=. --cov-report=html
+# Run RFC compliance validation
+python3 tests/test_rfc_compliance_fixes.py
+
+# Run protocol flow tests (validates PCI flags=0x0000)
+python3 tests/test_protocol_flow.py
+
+# Quick interoperability check
+python3 tests/test_simple_auth.py
 ```
+
+### Test Documentation
+
+Comprehensive test documentation is available:
+- `tests/TEST_DOCUMENTATION.md` - Detailed descriptions of all 15 tests
+- `tests/TEST_CATEGORIZATION.md` - Test organization and status
+- `tests/TEST_COMPATIBILITY_FIXED.md` - Enhanced compatibility test details
+- `tests/TEST_RFC_COMPLIANCE_FIXES.md` - RFC compliance test documentation
+- `tests/RUN_TESTS_DOCUMENTATION.md` - Test runner architecture
 
 ### Test Coverage
 
@@ -596,7 +632,7 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
 # Run tests
-pytest tests/
+python3 run_tests.py  # Runs all 15 active tests
 ```
 
 ### Code Style

@@ -1,31 +1,39 @@
 # pyPANA Test Suite Documentation
 
-This directory contains all test files for the pyPANA v2.3.0 implementation.
+This directory contains all test files for the pyPANA v2.3.1 implementation.
+
+## 📚 Complete Documentation
+
+For detailed test documentation, see [TEST_DOCUMENTATION.md](TEST_DOCUMENTATION.md)
 
 ## Quick Start
 
 ### Running Core Tests
 
 ```bash
-# From project root - run main compatibility test
-python3 tests/test_compatibility.py
+# From project root - run main compatibility test (improved version)
+python3 tests/test_compatibility_fixed.py
 
-# Run protocol flow tests
+# Run protocol flow tests (validates RFC 5191 compliance)
 python3 tests/test_protocol_flow.py
 
 # Run simple authentication test
 python3 tests/test_simple_auth.py
+
+# Run comprehensive cryptographic tests
+python3 tests/test_crypto_algorithms.py
 ```
 
 ## Test Categories
 
-### 1. Core Compatibility Tests (4 tests)
-Essential tests for v2.3.0 RFC 5191 compliance and basic functionality.
+### 1. Core Compatibility Tests (5 tests)
+Essential tests for v2.3.1 RFC 5191 compliance and basic functionality.
 
-- **test_compatibility.py** - Main v2.3.0 compatibility verification
-- **test_protocol_flow.py** - PANA protocol message format tests
+- **test_compatibility.py** - Basic pyPANA ↔ pyPANA compatibility
+- **test_compatibility_fixed.py** - Enhanced compatibility test with threading
+- **test_protocol_flow.py** - PANA protocol message format tests (PCI flags=0x0000)
 - **test_simple_auth.py** - Simple authentication flow test
-- **test_e2e.py** - End-to-end testing with v2.3.0 fixes
+- **test_e2e.py** - End-to-end testing with v2.3.0+ fixes
 
 ### 2. OpenPANA Interoperability (3 tests)
 Tests for compatibility with OpenPANA implementation.

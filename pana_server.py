@@ -17,25 +17,41 @@ RFC5191 compliant PANA server
 - RADIUSサーバーとの統合（オプション）
 """
 
-import os
 import socket
 import struct
 import select
 import logging
 import time
 
-from pana_constants import *
-from pana_constants import AUTHENTICATED_SESSION_CLEANUP_DELAY
+from pana_constants import (
+    # Message types
+    PANA_CLIENT_INITIATION, PANA_AUTH, PANA_TERMINATION, PANA_NOTIFICATION,
+    # Flags
+    FLAG_REQUEST, FLAG_START, FLAG_COMPLETE, FLAG_PING, FLAG_REAUTH,
+    FLAG_IP_RECONFIG,
+    # AVP codes
+    AVP_RESULT_CODE, AVP_EAP_PAYLOAD, AVP_NONCE, AVP_PRF_ALGORITHM,
+    AVP_INTEGRITY_ALGORITHM, AVP_KEY_ID, AVP_AUTH, AVP_SESSION_LIFETIME,
+    AVP_ENCRYPTION_ALGORITHM, AVP_ENCRYPTION_ENCAP,
+    # Result codes
+    RESULT_CODE_SUCCESS, RESULT_CODE_FAILURE,
+    # State constants
+    PAA_STATE_WAIT_EAP_MSG, PAA_STATE_WAIT_SUCC_PAN, PAA_STATE_OPEN, 
+    PAA_STATE_WAIT_FAIL_PAN,
+    # Algorithm constants
+    PRF_HMAC_SHA1, PRF_HMAC_SHA2_256,
+    AUTH_HMAC_SHA1_160, AUTH_HMAC_SHA2_256_128,
+    AES128_CTR,
+    # Other constants
+    AUTHENTICATED_SESSION_CLEANUP_DELAY, DEFAULT_SESSION_LIFETIME,
+    EAP_REQUEST, EAP_TYPE_IDENTITY
+)
 from pana_messages import PANAMessage, AVP, create_avp_uint32, extract_avp_uint32
 from pana_session import SessionManager
 from pana_retransmission import RetransmissionManager
 from eap_tls_factory import create_eap_tls_handler
-from pana_error_recovery import ErrorRecovery, ErrorContext, ErrorType, RecoveryAction, create_error_context
+from pana_error_recovery import ErrorRecovery, ErrorType, RecoveryAction, create_error_context
 from pana_server_encryption import ServerEncryptionHelper
-from pana_encryption_policy import EncryptionPolicy
-from pana_antireplay import AntiReplay
-from pana_ratelimit import RateLimiter
-from pana_config import get_config
 # from pana_fragmentation import MessageFragmenter  # Removed: RFC 5191 forbids fragmentation
 from pana_statistics import PANAStatistics
 from pana_monitor import PANAMonitor
@@ -234,11 +250,22 @@ class PANAAuthAgent:
         self.logger.debug("Creating EAP-Request/Identity")
         try:
             if self.radius_client is None:
-                # 明示的にEAP-Request/Identityを作成して一貫性を保つ
-                # これにより、すべての環境で同じ動作を保証
-                eap_req = struct.pack('!BBH', 1, session.eap_identifier, 5) + bytes([1])  # EAP-Request/Identity
-                session.eap_identifier = (session.eap_identifier + 1) % 256
-                self.logger.debug(f"EAP-Request/Identity created: {len(eap_req) if eap_req else 0} bytes")
+                # Get EAP-Request/Identity from the EAP handler to ensure state consistency
+                if session.eap_handler:
+                    # Let the handler generate the initial EAP-Request/Identity
+                    eap_req = session.eap_handler.process_eap_message(b'')
+                    if eap_req:
+                        self.logger.debug(f"EAP-Request/Identity from handler: {len(eap_req)} bytes")
+                    else:
+                        # Fallback: manually create EAP-Request/Identity
+                        eap_req = struct.pack('!BBH', 1, session.eap_identifier, 5) + bytes([1])
+                        session.eap_identifier = (session.eap_identifier + 1) % 256
+                        self.logger.debug(f"Manual EAP-Request/Identity: {len(eap_req)} bytes")
+                else:
+                    # No handler, create manually
+                    eap_req = struct.pack('!BBH', 1, session.eap_identifier, 5) + bytes([1])
+                    session.eap_identifier = (session.eap_identifier + 1) % 256
+                    self.logger.debug(f"EAP-Request/Identity created: {len(eap_req) if eap_req else 0} bytes")
             else:
                 eap_req = struct.pack('!BBH', EAP_REQUEST, session.eap_identifier, 5) + bytes([EAP_TYPE_IDENTITY])
                 session.eap_identifier += 1

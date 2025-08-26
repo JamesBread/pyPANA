@@ -1,11 +1,12 @@
 # pyPANA v2.3.0 Release Notes
 
 **Release Date**: 2025-08-21  
+**Latest Update**: 2025-08-26 (v2.3.1 fixes)  
 **Status**: ✅ STABLE - Production Ready
 
 ## 🎉 Major Achievement
 
-pyPANA v2.3.0 achieves **complete RFC 5191 compliance** and **full OpenPANA protocol compatibility**.
+pyPANA v2.3.0+ achieves **complete RFC 5191 compliance** and **full OpenPANA protocol compatibility**.
 
 ## ✅ What's New
 
@@ -16,10 +17,11 @@ pyPANA v2.3.0 achieves **complete RFC 5191 compliance** and **full OpenPANA prot
 - Full protocol state machine
 
 ### 2. OpenPANA Compatibility Fixed
-- **PCI Message**: Now 16-byte header only (no AVPs)
-- **Nonce Length**: 20 bytes per RFC 5191
+- **PCI Message**: Now 16-byte header only (no AVPs, flags=0x0000)
+- **Nonce Exchange**: Properly timed after S-bit messages
 - **AUTH AVP**: 20 bytes with SHA1_160
 - **Algorithm Selection**: SHA1 preferred for maximum compatibility
+- **EAP-TLS**: Fixed packet length and state machine (v2.3.1)
 
 ### 3. PyOpenSSL Integration (from v2.2.0)
 - Proper MSK/EMSK derivation using `export_keying_material()`

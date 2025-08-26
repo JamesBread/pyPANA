@@ -1,12 +1,13 @@
-# Test File Categorization (v2.3.0)
+# Test File Categorization (v2.3.1)
 
-## 🟢 ACTIVE TESTS (13 Working Tests)
+## 🟢 ACTIVE TESTS (15 Working Tests)
 
-These tests are current, functional, and relevant to pyPANA v2.3.0:
+These tests are current, functional, and relevant to pyPANA v2.3.1:
 
-### Core Compatibility (4 tests)
-- `test_compatibility.py` - Main v2.3.0 compatibility verification ✅
-- `test_protocol_flow.py` - Protocol message format tests ✅
+### Core Compatibility (5 tests)
+- `test_compatibility.py` - Basic pyPANA ↔ pyPANA compatibility ✅
+- `test_compatibility_fixed.py` - Enhanced compatibility with threading (NEW) ✅
+- `test_protocol_flow.py` - Protocol message format tests (PCI flags=0x0000) ✅
 - `test_simple_auth.py` - Simple authentication flow ✅
 - `test_e2e.py` - End-to-end testing ✅
 
@@ -20,9 +21,10 @@ These tests are current, functional, and relevant to pyPANA v2.3.0:
 - `test_crypto_algorithms.py` - Algorithm verification ✅
 - `test_avp_format.py` - AVP format validation ✅
 
-### RFC Compliance (2 tests)
-- `test_rfc6786_compliance.py` - RFC 6786 compliance ✅
-- `test_rfc_compliant_reauth.py` - RFC compliant re-auth ✅
+### RFC Compliance (3 tests)
+- `test_rfc_compliance_fixes.py` - RFC 5191 compliance validation (NEW) ✅
+- `test_rfc6786_compliance.py` - RFC 6786 AVP encryption compliance ✅
+- `test_rfc_compliant_reauth.py` - RFC compliant re-authentication ✅
 
 ### Integration Test (1 test)
 - `test_pana.py` - Basic PANA protocol ✅

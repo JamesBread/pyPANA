@@ -43,7 +43,7 @@ def test_pci_format():
     # PaCが作成するPCIメッセージ
     pci = PANAMessage()
     pci.msg_type = PANA_CLIENT_INITIATION
-    pci.flags = FLAG_REQUEST | FLAG_START
+    pci.flags = 0  # RFC 5191: PCI has no flags set
     pci.session_id = 0  # PCIではsession_id=0
     pci.seq_number = 0  # PCIではseq_number=0
     
