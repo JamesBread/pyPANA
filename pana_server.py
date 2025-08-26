@@ -37,7 +37,7 @@ from pana_constants import (
     RESULT_CODE_SUCCESS, RESULT_CODE_FAILURE,
     # State constants
     PAA_STATE_WAIT_EAP_MSG, PAA_STATE_WAIT_SUCC_PAN, PAA_STATE_OPEN, 
-    PAA_STATE_WAIT_FAIL_PAN,
+    PAA_STATE_WAIT_FAIL_PAN, PAA_STATE_WAIT_PAN_OR_PAR,
     # Algorithm constants
     PRF_HMAC_SHA1, PRF_HMAC_SHA2_256,
     AUTH_HMAC_SHA1_160, AUTH_HMAC_SHA2_256_128,
@@ -246,39 +246,19 @@ class PANAAuthAgent:
         auth_req.seq_number = session.seq_number  # シーケンス番号
         self.logger.debug(f"PAR: session_id={session_id:08x}, seq={session.seq_number}")
         
-        # Create EAP-Request/Identity
-        self.logger.debug("Creating EAP-Request/Identity")
-        try:
-            if self.radius_client is None:
-                # Get EAP-Request/Identity from the EAP handler to ensure state consistency
-                if session.eap_handler:
-                    # Let the handler generate the initial EAP-Request/Identity
-                    eap_req = session.eap_handler.process_eap_message(b'')
-                    if eap_req:
-                        self.logger.debug(f"EAP-Request/Identity from handler: {len(eap_req)} bytes")
-                    else:
-                        # Fallback: manually create EAP-Request/Identity
-                        eap_req = struct.pack('!BBH', 1, session.eap_identifier, 5) + bytes([1])
-                        session.eap_identifier = (session.eap_identifier + 1) % 256
-                        self.logger.debug(f"Manual EAP-Request/Identity: {len(eap_req)} bytes")
-                else:
-                    # No handler, create manually
-                    eap_req = struct.pack('!BBH', 1, session.eap_identifier, 5) + bytes([1])
-                    session.eap_identifier = (session.eap_identifier + 1) % 256
-                    self.logger.debug(f"EAP-Request/Identity created: {len(eap_req) if eap_req else 0} bytes")
-            else:
-                eap_req = struct.pack('!BBH', EAP_REQUEST, session.eap_identifier, 5) + bytes([EAP_TYPE_IDENTITY])
-                session.eap_identifier += 1
-            if eap_req:
-                auth_req.add_avp(AVP(AVP_EAP_PAYLOAD, 0, eap_req))
-                self.logger.debug(f"Added EAP-Request AVP")
-        except Exception as e:
-            self.logger.error(f"Failed to create EAP-Request: {e}", exc_info=True)
-            return
+        # RFC 5191: Initial PAR with S-bit should NOT contain EAP or nonce
+        # EAP-Request/Identity will be sent in first non-initial PAR
+        # Initialize EAP handler but don't send EAP yet
+        self.logger.debug("Preparing EAP handler for later use")
+        if self.radius_client is None and session.eap_handler:
+            # Initialize the handler but don't generate EAP-Request yet
+            self.logger.debug("EAP handler ready for first non-initial PAR")
         
-        # Add PAA nonce
+        # RFC 5191: No nonce in initial PAR with S-bit
+        # PAA nonce will be sent in first non-initial PAR
+        # Generate nonce now but don't send it yet
         session.crypto_ctx.nonce_paa = session.crypto_ctx.generate_nonce()
-        auth_req.add_avp(AVP(AVP_NONCE, 0, session.crypto_ctx.nonce_paa))
+        self.logger.debug(f"Generated PAA nonce for later use: {session.crypto_ctx.nonce_paa.hex()}")
         
         # RFC5191準拠: PAAが複数のアルゴリズム候補を提示
         # PRF candidates (SHA1 first for OpenPANA compatibility, per RFC5191)
@@ -397,17 +377,21 @@ class PANAAuthAgent:
         if not msg.is_request() and selected_integrity:
             session.crypto_ctx.auth_algorithm = selected_integrity
             self.logger.info(f"Client selected integrity algorithm: {selected_integrity}")
+        
+        # RFC 5191: Extract client nonce from first non-initial PAN (no S-bit)
+        if not msg.is_request() and not (msg.flags & FLAG_START) and not session.crypto_ctx.nonce_pac:
+            for avp in msg.avps:
+                if avp.code == AVP_NONCE:
+                    session.crypto_ctx.nonce_pac = avp.value
+                    self.logger.debug(f"Extracted client nonce from first non-initial PAN: {avp.value.hex()}")
             
         # Store I_PAN (initial PAN with S-bit) for key derivation (RFC 5191 Section 5.3)
         if not msg.is_request() and (msg.flags & FLAG_START) and not session.crypto_ctx.i_pan:
             session.crypto_ctx.i_pan = msg.pack()
             self.logger.debug(f"Stored I_PAN ({len(session.crypto_ctx.i_pan)} bytes) for key derivation")
             
-            # Extract client nonce from initial PAN (RFC 5191)
-            for avp in msg.avps:
-                if avp.code == AVP_NONCE:
-                    session.crypto_ctx.nonce_pac = avp.value
-                    self.logger.debug(f"Extracted client nonce from initial PAN: {avp.value.hex()}")
+            # RFC 5191: Nonce MUST NOT be in initial messages with S-bit
+            # Client nonce will come in first non-initial PAN
                 
         # Verify AUTH AVP if present and we have keys
         if auth_avp and session.crypto_ctx.pana_auth_key:
@@ -574,6 +558,44 @@ class PANAAuthAgent:
                 # Note: Will be resumed if re-authentication is needed
                 
             self.logger.info(f"Client acknowledged authentication for session {session_id:08x}")
+        else:
+            # Handle initial PAN with S-bit - send first non-initial PAR with nonce and EAP-Request/Identity
+            # RFC 5191 Section 4.1: "A Nonce AVP MUST be included in the first PANA-Auth-Request
+            # and PANA-Auth-Answer messages following the initial messages (with 'S' bit set)"
+            if not msg.is_request() and (msg.flags & FLAG_START):
+                self.logger.info("Received initial PAN with S-bit, sending first non-initial PAR with PAA nonce and EAP-Request/Identity")
+                
+                # Generate EAP Request/Identity
+                eap_response = session.eap_handler.process_eap_message(b'')
+                
+                # Create first non-initial PAR with nonce and EAP-Request/Identity
+                auth_req = PANAMessage()
+                auth_req.flags = FLAG_REQUEST  # No S-bit for non-initial message
+                auth_req.msg_type = PANA_AUTH
+                auth_req.session_id = session_id
+                auth_req.seq_number = session.seq_number
+                
+                # Add PAA nonce (RFC 5191 requirement)
+                if not session.crypto_ctx.nonce_paa:
+                    session.crypto_ctx.nonce_paa = session.crypto_ctx.generate_nonce()
+                auth_req.add_avp(AVP(AVP_NONCE, 0, session.crypto_ctx.nonce_paa))
+                self.logger.debug(f"Added PAA nonce to first non-initial PAR: {session.crypto_ctx.nonce_paa.hex()}")
+                
+                # Add EAP-Request/Identity
+                if eap_response:
+                    auth_req.add_avp(AVP(AVP_EAP_PAYLOAD, 0, eap_response))
+                    self.logger.debug(f"Added EAP-Request/Identity to first non-initial PAR")
+                
+                # Send message
+                message_data = auth_req.pack()
+                self.socket.sendto(message_data, addr)
+                self.retransmit_mgr.add_message(session.seq_number, message_data, addr)
+                # RFC 5191 Section 5.2: Wrap sequence number at 2^32
+                session.seq_number = (session.seq_number + 1) % (2**32)
+                
+                # Update state
+                session.state = PAA_STATE_WAIT_EAP_MSG
+                self.logger.info(f"State transition: {PAA_STATE_WAIT_PAN_OR_PAR} -> {PAA_STATE_WAIT_EAP_MSG}")
             
         
     def handle_notification_msg(self, msg, addr):

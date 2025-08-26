@@ -531,13 +531,21 @@ class PANAClient:
                 # Add EAP payload
                 answer.add_avp(AVP(AVP_EAP_PAYLOAD, 0, eap_response))
                 
+                # RFC 5191: Add client nonce to first non-initial PAN (no S-bit)
+                # This happens after initial exchange when we have PAA nonce
+                if not (msg.flags & FLAG_START) and self.crypto_ctx.nonce_paa and not hasattr(self, '_sent_client_nonce'):
+                    answer.add_avp(AVP(AVP_NONCE, 0, self.crypto_ctx.nonce_pac))
+                    self._sent_client_nonce = True
+                    self.logger.debug(f"Added client nonce to first non-initial PAN: {self.crypto_ctx.nonce_pac.hex()}")
+                
                 # 初期PANの場合、Nonceと選択したアルゴリズムを送信
                 if msg.flags & FLAG_START:
-                    # Generate and add client nonce (moved from PCI for OpenPANA compatibility)
+                    # RFC 5191 Section 4.1: Nonce MUST NOT be in initial messages with S-bit
+                    # Nonce will be sent in first non-initial PAN after receiving PAA nonce
+                    # Generate nonce now but don't send it yet
                     if not self.crypto_ctx.nonce_pac:
                         self.crypto_ctx.nonce_pac = self.generate_nonce()
-                    answer.add_avp(AVP(AVP_NONCE, 0, self.crypto_ctx.nonce_pac))
-                    self.logger.debug(f"Added Nonce AVP to initial PAN: {self.crypto_ctx.nonce_pac.hex()}")
+                        self.logger.debug(f"Generated client nonce for later use: {self.crypto_ctx.nonce_pac.hex()}")
                 
                 # 選択したアルゴリズムを送信
                 if hasattr(self, 'selected_prf'):
@@ -561,8 +569,40 @@ class PANAClient:
                 self.seq_number += 1
             else:
                 self.logger.warning("No EAP response generated")
+        elif msg.is_request() and (msg.flags & FLAG_START):
+            # RFC 5191: Respond to initial PAR with S-bit even without EAP
+            self.logger.info("Received initial PAR with S-bit (no EAP) - sending initial PAN with S-bit")
+            
+            # Send initial PAN with S-bit and selected algorithms
+            answer = PANAMessage()
+            answer.flags = FLAG_START  # Answer with S-bit
+            answer.msg_type = PANA_AUTH
+            answer.session_id = msg.session_id
+            answer.seq_number = msg.seq_number  # RFC 5191 Section 5.2: Answer uses request's seq number
+            
+            # Generate client nonce now but don't send it yet (RFC 5191)
+            if not self.crypto_ctx.nonce_pac:
+                self.crypto_ctx.nonce_pac = self.generate_nonce()
+                self.logger.debug(f"Generated client nonce for later use: {self.crypto_ctx.nonce_pac.hex()}")
+            
+            # Add selected algorithms
+            if hasattr(self, 'selected_prf'):
+                answer.add_avp(create_avp_uint32(AVP_PRF_ALGORITHM, self.selected_prf))
+            if hasattr(self, 'selected_integrity'):
+                answer.add_avp(create_avp_uint32(AVP_INTEGRITY_ALGORITHM, self.selected_integrity))
+            
+            # Store I_PAN if this is initial PAN with S-bit (RFC 5191 Section 5.3)
+            message_data = answer.pack()
+            if not self.crypto_ctx.i_pan:
+                self.crypto_ctx.i_pan = message_data
+                self.logger.debug(f"Stored I_PAN ({len(self.crypto_ctx.i_pan)} bytes) for key derivation")
+            
+            # Send the initial PAN
+            self.logger.debug(f"Sending initial PAN with S-bit, seq={answer.seq_number}")
+            self.socket.sendto(message_data, (self.server_addr, self.server_port))
+            self.seq_number += 1
         else:
-            self.logger.info("No EAP payload and not a complete message - no action taken")
+            self.logger.info("No action required for this message")
                 
     def _start_session_monitoring(self):
         """

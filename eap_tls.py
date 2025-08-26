@@ -716,9 +716,16 @@ class EAPTLSHandler:
                         if self.current_fragment_index < len(self.sent_fragments) - 1:
                             flags |= EAP_TLS_FLAG_MORE
 
+                        # サーバーは新しいRequestに対して識別子をインクリメント
+                        if self.is_server:
+                            self.eap_identifier = (self.eap_identifier + 1) % 256
+                            next_id = self.eap_identifier
+                        else:
+                            next_id = identifier
+                        
                         return self._create_eap_tls_packet(
                             EAP_RESPONSE if code == EAP_REQUEST else EAP_REQUEST,
-                            identifier,
+                            next_id,
                             flags,
                             self.sent_fragments[self.current_fragment_index]
                         )
@@ -735,9 +742,16 @@ class EAPTLSHandler:
                     if flags & EAP_TLS_FLAG_MORE:
                         # さらなるフラグメントが来る、ACKを送信
                         self.expecting_more_fragments = True
+                        # サーバーは新しいRequestに対して識別子をインクリメント
+                        if self.is_server:
+                            self.eap_identifier = (self.eap_identifier + 1) % 256
+                            next_id = self.eap_identifier
+                        else:
+                            next_id = identifier
+                        
                         return self._create_eap_tls_packet(
                             EAP_RESPONSE if code == EAP_REQUEST else EAP_REQUEST,
-                            identifier,
+                            next_id,
                             0  # 空のACK
                         )
                     else:
@@ -777,9 +791,16 @@ class EAPTLSHandler:
                     if len(self.sent_fragments) > 1:
                         flags |= EAP_TLS_FLAG_MORE | EAP_TLS_FLAG_LENGTH
 
+                    # サーバーは新しいRequestに対して識別子をインクリメント
+                    if self.is_server:
+                        self.eap_identifier = (self.eap_identifier + 1) % 256
+                        next_id = self.eap_identifier
+                    else:
+                        next_id = identifier
+                    
                     return self._create_eap_tls_packet(
                         EAP_RESPONSE if code == EAP_REQUEST else EAP_REQUEST,
-                        identifier,
+                        next_id,
                         flags,
                         self.sent_fragments[0]
                     )
@@ -795,7 +816,8 @@ class EAPTLSHandler:
                     if self.is_server:
                         # EAP Successを送信して完了とマーク
                         self.state = 'COMPLETE'
-                        return struct.pack('!BBH', EAP_SUCCESS, identifier + 1, 4)
+                        self.eap_identifier = (self.eap_identifier + 1) % 256
+                        return struct.pack('!BBH', EAP_SUCCESS, self.eap_identifier, 4)
                     else:
                         # クライアントはEAP Successを待ってから完了とマーク
                         # まだCOMPLETE状態には設定しない
@@ -807,9 +829,16 @@ class EAPTLSHandler:
                         )
 
                 # ハンドシェイクがまだ進行中だが送信するTLSデータがない
+                # サーバーは新しいRequestに対して識別子をインクリメント
+                if self.is_server and code == EAP_RESPONSE:
+                    self.eap_identifier = (self.eap_identifier + 1) % 256
+                    next_id = self.eap_identifier
+                else:
+                    next_id = identifier
+                
                 return self._create_eap_tls_packet(
                     EAP_RESPONSE if code == EAP_REQUEST else EAP_REQUEST,
-                    identifier,
+                    next_id,
                     0
                 )
                         
