@@ -422,6 +422,34 @@ class EAPTLSWithPyOpenSSL:
             bytes: RFC5216準拠の64バイトEMSK、または導出前の場合None
         """
         return self.emsk
+    
+    def cleanup(self):
+        """Clean up TLS resources
+        
+        【説明】
+        TLS接続とリソースをクリーンアップします。
+        セッション終了時や再認証時に呼び出されます。
+        """
+        try:
+            if self.connection:
+                # Close the TLS connection gracefully
+                try:
+                    self.connection.shutdown()
+                except:
+                    pass  # Connection might already be closed
+                self.connection = None
+            
+            # Clear sensitive key material
+            self.msk = None
+            self.emsk = None
+            
+            # Reset state
+            self.state = 'INIT'
+            self.handshake_complete = False
+            
+            self.logger.debug("EAP-TLS resources cleaned up")
+        except Exception as e:
+            self.logger.debug(f"Error during cleanup: {e}")
 
 
 def test_pyopenssl_export():
