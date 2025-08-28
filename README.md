@@ -77,16 +77,19 @@ PANA (Protocol for carrying Authentication for Network Access) is a UDP-based pr
 - **Self-Signed Cert Generation**: Automatic certificate creation for testing
 
 #### Security Features
-- **Message Authentication**: HMAC-SHA256 based message integrity (AUTH AVP)
+- **Message Authentication**: HMAC-SHA1/SHA256 based message integrity (AUTH AVP)
 - **Anti-Replay Protection**: Sliding window mechanism (32-packet window)
 - **AVP Encryption (RFC 6786)**: Full implementation with AES-128-CTR
   - Encryption-Algorithm AVP negotiation
   - Encryption-Encap AVP for sensitive data
   - Bidirectional encryption (PaC↔PAA)
 - **Cryptographic Algorithms**:
-  - PRF_HMAC_SHA2_256 (Key derivation)
-  - AUTH_HMAC_SHA2_256_128 (Message integrity, 128-bit truncated)
+  - PRF_HMAC_SHA1 (RFC 5191 mandatory, OpenPANA compatible)
+  - PRF_HMAC_SHA2_256 (Enhanced security option)
+  - AUTH_HMAC_SHA1_160 (20-byte AUTH AVP, default)
+  - AUTH_HMAC_SHA2_256_128 (16-byte AUTH AVP, enhanced security)
   - AES128_CTR (AVP encryption per RFC 6786)
+- **Algorithm Selection**: Configurable SHA1/SHA2 preference via --prefer-sha2 flag
 - **Nonce Generation**: Secure random nonce for session establishment
 - **Key Derivation**: RFC 5191 compliant key hierarchy ✅
   - PANA_AUTH_KEY (32 bytes with SHA-256)
@@ -273,6 +276,30 @@ python3 main.py pac 127.0.0.1 --debug
 
 This will perform EAP-TLS authentication using automatically generated self-signed certificates.
 
+### Enhanced Security with SHA2 Algorithms
+
+By default, pyPANA uses SHA1 algorithms for OpenPANA compatibility. For enhanced security, use the `--prefer-sha2` flag:
+
+**Terminal 1 (PAA with SHA2 preference):**
+```bash
+sudo python3 main.py paa --prefer-sha2 --debug
+```
+
+**Terminal 2 (PaC with SHA2 preference):**
+```bash
+python3 main.py pac 127.0.0.1 --prefer-sha2 --debug
+```
+
+**Algorithm Selection Details:**
+- **Default Mode (SHA1)**: Uses HMAC-SHA1 for PRF and AUTH_HMAC_SHA1_160 (20-byte AUTH AVP)
+  - Maximum compatibility with OpenPANA and legacy systems
+  - RFC 5191 mandatory algorithms
+- **SHA2 Mode (--prefer-sha2)**: Uses HMAC-SHA2-256 for PRF and AUTH_HMAC_SHA2_256_128 (16-byte AUTH AVP)
+  - Enhanced security with stronger cryptographic algorithms
+  - Both server and client must use the same preference
+
+**Note:** Algorithm preference must match on both PAA and PaC for successful authentication.
+
 ### Command Line Options
 
 **PAA (Server) Options:**
@@ -283,6 +310,7 @@ Options:
   --bind ADDRESS        Bind to specific IP address (default: 0.0.0.0)
   --port PORT          UDP port to listen on (default: 716)
   --debug              Enable debug logging
+  --prefer-sha2        Prefer SHA2 algorithms over SHA1 (more secure but less compatible)
   --radius-server IP   RADIUS server IP address
   --radius-port PORT   RADIUS server port (default: 1812)
   --radius-secret SECRET  RADIUS shared secret
@@ -297,6 +325,7 @@ python3 main.py pac SERVER_IP [options]
 Options:
   --port PORT          PAA server port (default: 716)
   --debug              Enable debug logging
+  --prefer-sha2        Prefer SHA2 algorithms over SHA1 (must match server setting)
   --timeout SEC        Connection timeout (default: 10)
   --enable-encryption  Enable RFC 6786 AVP encryption
 ```

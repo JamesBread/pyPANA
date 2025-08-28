@@ -31,7 +31,7 @@ pyPANAは、RFC 5191で定義されたネットワークアクセス認証のた
 - **モジュラーアーキテクチャ**: 25以上の専門化されたモジュールによる関心の分離
 - **包括的なテスト**: 完全なRFC準拠カバレッジを持つ15個のアクティブテストファイル
 
-### 現在の実装状況 (v2.3.1)
+### 現在の実装状況 (v2.3.2)
 
 #### ✅ 完全実装済み
 - **コアPANAプロトコル (RFC 5191)**
@@ -49,6 +49,7 @@ pyPANAは、RFC 5191で定義されたネットワークアクセス認証のた
   - 暗号化アルゴリズムネゴシエーション
   - ポリシーベースの暗号化強制
   - スライディングウィンドウによるアンチリプレイ保護
+  - 設定可能SHA1/SHA2アルゴリズム優先度（v2.3.2）
 
 - **EAP-TLS認証**
   - 完全なPyOpenSSLベースの実装
@@ -240,13 +241,60 @@ PANA_PAA_ENCR_KEY = prf+(MSK, "IETF PANA PAA Encr"|I_PAR|I_PAN|PaC_nonce|PAA_non
 
 ### サポートされるアルゴリズム
 
-| タイプ | アルゴリズム | ID | 説明 |
-|--------|--------------|-----|------|
-| PRF | PRF_HMAC_SHA1 | 2 | RFC 5191必須 |
-| PRF | PRF_HMAC_SHA2_256 | 5 | 強化セキュリティ |
-| Integrity | AUTH_HMAC_SHA1_160 | 7 | 160ビットHMAC-SHA1 |
-| Integrity | AUTH_HMAC_SHA2_256_128 | 12 | 128ビット切り捨てHMAC-SHA256 |
-| Encryption | AES128_CTR | 1 | カウンターモードAES-128 |
+| タイプ | アルゴリズム | ID | 説明 | デフォルト |
+|--------|--------------|-----|------|------------|
+| PRF | PRF_HMAC_SHA1 | 2 | RFC 5191必須 | はい |
+| PRF | PRF_HMAC_SHA2_256 | 5 | 強化セキュリティ | --prefer-sha2で |
+| Integrity | AUTH_HMAC_SHA1_160 | 7 | 160ビットHMAC-SHA1（20バイト） | はい |
+| Integrity | AUTH_HMAC_SHA2_256_128 | 12 | 128ビット切り捨てHMAC-SHA256（16バイト） | --prefer-sha2で |
+| Encryption | AES128_CTR | 1 | カウンターモードAES-128 | N/A |
+
+### アルゴリズム選択と優先度 (v2.3.2新機能)
+
+v2.3.2より、pyPANAは`--prefer-sha2`コマンドラインフラグを介して設定可能なアルゴリズム優先度をサポートします。これにより、従来のSHA1ベースのアルゴリズムと、より安全なSHA2ベースのアルゴリズムを選択できるようになりました。
+
+#### デフォルトモード（OpenPANA互換）
+- **PRF**: HMAC-SHA1 (ID: 2)
+- **Integrity**: AUTH_HMAC_SHA1_160 (ID: 7)
+- **AUTH AVPサイズ**: 20バイト
+- **互換性**: OpenPANAおよびレガシーPANA実装との最大互換性
+- **使用方法**: 追加フラグ不要（デフォルト動作）
+
+```bash
+# デフォルトモード（SHA1優先）での起動例
+python3 main.py paa --port 5555
+python3 main.py pac 127.0.0.1 --port 5555
+```
+
+#### 強化セキュリティモード（SHA2優先）
+- **PRF**: HMAC-SHA2-256 (ID: 5)
+- **Integrity**: AUTH_HMAC_SHA2_256_128 (ID: 12)
+- **AUTH AVPサイズ**: 16バイト（128ビットに切り捨て）
+- **セキュリティ**: より強力な暗号アルゴリズム
+- **使用方法**: PAAとPaC両方に`--prefer-sha2`フラグを追加
+
+```bash
+# SHA2優先モードでの起動例
+python3 main.py paa --port 5555 --prefer-sha2
+python3 main.py pac 127.0.0.1 --port 5555 --prefer-sha2
+```
+
+#### アルゴリズムネゴシエーションプロセス
+
+1. **PAA提示**: サーバーが優先順位でアルゴリズムをリスト
+   - デフォルト: SHA1が最初、SHA2が二番目
+   - --prefer-sha2使用時: SHA2が最初、SHA1が二番目
+
+2. **PaC選択**: クライアントが優先設定と利用可能なオプションに基づき選択
+   - デフォルト: 利用可能ならSHA1を優先
+   - --prefer-sha2使用時: 利用可能ならSHA2を優先
+
+3. **検証**: 両側が選択したアルゴリズムを鍵導出とAUTH AVPに使用
+
+**重要な注意事項**:
+- PAAとPaCの両方が最適なセキュリティのため一致した優先設定を使用する必要があります
+- 異なる優先設定の場合、互換性のためSHA1が選択されます
+- AUTH AVPのサイズがアルゴリズムによって異なることに注意（SHA1: 20バイト、SHA2: 16バイト）
 
 ### AVP暗号化 (RFC 6786)
 
@@ -394,7 +442,7 @@ rate_limiter = RateLimiter(
 
 ## テストと検証
 
-### テストスイート概要 (v2.3.1)
+### テストスイート概要 (v2.3.2)
 
 テストスイートは5つのカテゴリーに整理された15個のアクティブテストで構成されています：
 
@@ -430,6 +478,9 @@ rate_limiter = RateLimiter(
 ```bash
 # すべての15個のアクティブテストを実行
 python3 run_tests.py
+
+# SHA2アルゴリズム選択テストを実行（v2.3.2）
+python3 tests/test_sha2_algorithms.py
 
 # 拡張互換性テストを実行（v2.3.1）
 python3 tests/test_compatibility_fixed.py
@@ -525,10 +576,11 @@ DEFAULT_SESSION_LIFETIME = 3600  # 1時間
 RETRANSMIT_INTERVAL = 3.0       # 秒
 MAX_RETRANSMISSIONS = 3
 
-# アルゴリズム選択
-PRF_ALGORITHM = PRF_HMAC_SHA1  # OpenPANA互換
-AUTH_ALGORITHM = AUTH_HMAC_SHA1_160
-ENCR_ALGORITHM = AES128_CTR
+# アルゴリズム選択（デフォルト設定）
+# v2.3.2より、--prefer-sha2フラグで動的に変更可能
+PRF_ALGORITHM = PRF_HMAC_SHA1  # デフォルト: OpenPANA互換
+AUTH_ALGORITHM = AUTH_HMAC_SHA1_160  # デフォルト: 20バイトAUTH AVP
+ENCR_ALGORITHM = AES128_CTR  # 暗号化用（変更なし）
 
 # セキュリティ設定
 RATE_LIMIT_ENABLED = False

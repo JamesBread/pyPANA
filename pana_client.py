@@ -51,7 +51,7 @@ class PANAClient:
     INITIAL -> WAIT_PAN_OR_PAR -> WAIT_EAP_MSG -> OPEN
     各状態の詳細はRFC5191のセクション4.1を参照。
     """
-    def __init__(self, server_addr, server_port=716, encryption_policy=None):
+    def __init__(self, server_addr, server_port=716, encryption_policy=None, prefer_sha2=False):
         """
         PANAクライアントの初期化
         
@@ -59,10 +59,25 @@ class PANAClient:
             server_addr: PAAサーバーのIPアドレス
             server_port: PAAサーバーのポート番号（デフォルト: 716）
             encryption_policy: RFC6786暗号化ポリシー（オプション）
+            prefer_sha2: SHA2アルゴリズム優先フラグ（v2.3.2新機能）
+                        True: SHA2-256を優先（PRF_HMAC_SHA2_256, AUTH_HMAC_SHA2_256_128）
+                              AUTH AVPは16バイト（128ビットに切り詰め）
+                              より強力な暗号アルゴリズムでセキュリティ向上
+                        False: SHA1を優先（デフォルト、OpenPANA互換）
+                               PRF_HMAC_SHA1, AUTH_HMAC_SHA1_160
+                               AUTH AVPは20バイト（160ビット）
+                               RFC 5191必須アルゴリズムで最大互換性
+        
+        注意: PAAサーバーと同じprefer_sha2設定を使用する必要があります。
+             異なる設定の場合、互換性のためSHA1が選択されます。
         """
         # サーバー接続情報の設定
         self.server_addr = server_addr
         self.server_port = server_port
+        # SHA2アルゴリズム優先フラグ（v2.3.2で追加）
+        # True: SHA2-256/AUTH_HMAC_SHA2_256_128を優先（より安全）
+        # False: SHA1/AUTH_HMAC_SHA1_160を優先（デフォルト、OpenPANA互換）  
+        self.prefer_sha2 = prefer_sha2
         
         # ロギング設定（早期に設定）
         self.logger = logging.getLogger('PANA-Client')
@@ -366,31 +381,65 @@ class PANAClient:
                 self.seq_number_initialized = True
                 self.logger.info(f"Initialized random sequence number: {self.seq_number}")
             # 最適なアルゴリズムを選択
+            # prefer_sha2フラグに基づいてPRFアルゴリズムを選択
             if prf_algorithms:
-                # SHA1を優先（RFC 5191 mandatory, OpenPANA互換）
-                if PRF_HMAC_SHA1 in prf_algorithms:
-                    self.selected_prf = PRF_HMAC_SHA1
-                    self.crypto_ctx.prf_algorithm = PRF_HMAC_SHA1
-                elif PRF_HMAC_SHA2_256 in prf_algorithms:
-                    self.selected_prf = PRF_HMAC_SHA2_256
-                    self.crypto_ctx.prf_algorithm = PRF_HMAC_SHA2_256
+                if self.prefer_sha2:
+                    # SHA2を優先（v2.3.2: より安全だがOpenPANAと互換性なし）
+                    # PRF_HMAC_SHA2_256 (ID:5) > PRF_HMAC_SHA1 (ID:2)
+                    if PRF_HMAC_SHA2_256 in prf_algorithms:
+                        self.selected_prf = PRF_HMAC_SHA2_256
+                        self.crypto_ctx.prf_algorithm = PRF_HMAC_SHA2_256
+                    elif PRF_HMAC_SHA1 in prf_algorithms:
+                        self.selected_prf = PRF_HMAC_SHA1
+                        self.crypto_ctx.prf_algorithm = PRF_HMAC_SHA1
+                    else:
+                        self.selected_prf = prf_algorithms[0]  # 最初の候補を選択
+                        self.crypto_ctx.prf_algorithm = prf_algorithms[0]
                 else:
-                    self.selected_prf = prf_algorithms[0]  # 最初の候補を選択
-                    self.crypto_ctx.prf_algorithm = prf_algorithms[0]
-                self.logger.info(f"Selected PRF algorithm: {self.selected_prf}")
+                    # SHA1を優先（デフォルト: RFC 5191 mandatory, OpenPANA互換）  
+                    # PRF_HMAC_SHA1 (ID:2) > PRF_HMAC_SHA2_256 (ID:5)
+                    if PRF_HMAC_SHA1 in prf_algorithms:
+                        self.selected_prf = PRF_HMAC_SHA1
+                        self.crypto_ctx.prf_algorithm = PRF_HMAC_SHA1
+                    elif PRF_HMAC_SHA2_256 in prf_algorithms:
+                        self.selected_prf = PRF_HMAC_SHA2_256
+                        self.crypto_ctx.prf_algorithm = PRF_HMAC_SHA2_256
+                    else:
+                        self.selected_prf = prf_algorithms[0]  # 最初の候補を選択
+                        self.crypto_ctx.prf_algorithm = prf_algorithms[0]
+                # 選択結果をログ出力（prefer_sha2設定も表示）
+                self.logger.info(f"Selected PRF algorithm: {self.selected_prf} (prefer_sha2={self.prefer_sha2})")
                 
+            # Integrityアルゴリズムの選択（AUTH AVP計算用）
             if integrity_algorithms:
-                # SHA1を優先（RFC 5191 mandatory, OpenPANA互換）
-                if AUTH_HMAC_SHA1_160 in integrity_algorithms:
-                    self.selected_integrity = AUTH_HMAC_SHA1_160
-                    self.crypto_ctx.auth_algorithm = AUTH_HMAC_SHA1_160
-                elif AUTH_HMAC_SHA2_256_128 in integrity_algorithms:
-                    self.selected_integrity = AUTH_HMAC_SHA2_256_128
-                    self.crypto_ctx.auth_algorithm = AUTH_HMAC_SHA2_256_128
+                if self.prefer_sha2:
+                    # SHA2を優先（v2.3.2: AUTH AVP 16バイト、より安全）
+                    # AUTH_HMAC_SHA2_256_128 (ID:12) > AUTH_HMAC_SHA1_160 (ID:7)
+                    if AUTH_HMAC_SHA2_256_128 in integrity_algorithms:
+                        self.selected_integrity = AUTH_HMAC_SHA2_256_128
+                        self.crypto_ctx.auth_algorithm = AUTH_HMAC_SHA2_256_128
+                    elif AUTH_HMAC_SHA1_160 in integrity_algorithms:
+                        self.selected_integrity = AUTH_HMAC_SHA1_160
+                        self.crypto_ctx.auth_algorithm = AUTH_HMAC_SHA1_160
+                    else:
+                        self.selected_integrity = integrity_algorithms[0]  # 最初の候補を選択
+                        self.crypto_ctx.auth_algorithm = integrity_algorithms[0]
                 else:
-                    self.selected_integrity = integrity_algorithms[0]  # 最初の候補を選択
-                    self.crypto_ctx.auth_algorithm = integrity_algorithms[0]
-                self.logger.info(f"Selected integrity algorithm: {self.selected_integrity}")
+                    # SHA1を優先（デフォルト: AUTH AVP 20バイト、OpenPANA互換）
+                    # AUTH_HMAC_SHA1_160 (ID:7) > AUTH_HMAC_SHA2_256_128 (ID:12)
+                    if AUTH_HMAC_SHA1_160 in integrity_algorithms:
+                        self.selected_integrity = AUTH_HMAC_SHA1_160
+                        self.crypto_ctx.auth_algorithm = AUTH_HMAC_SHA1_160
+                    elif AUTH_HMAC_SHA2_256_128 in integrity_algorithms:
+                        self.selected_integrity = AUTH_HMAC_SHA2_256_128
+                        self.crypto_ctx.auth_algorithm = AUTH_HMAC_SHA2_256_128
+                    else:
+                        self.selected_integrity = integrity_algorithms[0]  # 最初の候補を選択
+                        self.crypto_ctx.auth_algorithm = integrity_algorithms[0]
+                # 選択結果をログ出力（AUTH AVPサイズも影響）
+                auth_avp_size = 16 if self.selected_integrity == AUTH_HMAC_SHA2_256_128 else 20
+                self.logger.info(f"Selected integrity algorithm: {self.selected_integrity} "
+                               f"(prefer_sha2={self.prefer_sha2}, AUTH AVP: {auth_avp_size} bytes)")
             
         # Update session lifetime if provided
         if session_lifetime:

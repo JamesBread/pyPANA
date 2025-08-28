@@ -77,7 +77,18 @@ def print_usage():
     print("  - OpenSSL 3.x support")
 
 
-def run_paa(port=716, bind_addr='0.0.0.0', debug=False):
+def run_paa(port=716, bind_addr='0.0.0.0', debug=False, prefer_sha2=False):
+    """
+    PAAサーバーを実行
+    
+    Args:
+        port: リッスンポート番号
+        bind_addr: バインドアドレス
+        debug: デバッグログの有効化
+        prefer_sha2: SHA2アルゴリズムを優先（より安全だが互換性に注意）
+                    True: SHA2-256を優先（AUTH AVP 16バイト）
+                    False: SHA1を優先（デフォルト、OpenPANA互換、AUTH AVP 20バイト）
+    """
     """Run PANA Authentication Agent
     
     PANA認証エージェント（PAA）を起動する
@@ -97,7 +108,9 @@ def run_paa(port=716, bind_addr='0.0.0.0', debug=False):
     print("")
     
     global server
-    server = PANAAuthAgent(bind_addr=bind_addr, bind_port=port)
+    # PAAサーバーインスタンスを作成
+    # prefer_sha2: SHA2アルゴリズム優先フラグ（True: SHA2優先、False: SHA1優先[デフォルト]）
+    server = PANAAuthAgent(bind_addr=bind_addr, bind_port=port, prefer_sha2=prefer_sha2)
     try:
         server.run()
     except KeyboardInterrupt:
@@ -106,7 +119,18 @@ def run_paa(port=716, bind_addr='0.0.0.0', debug=False):
         print("PAA stopped.")
 
 
-def run_pac(server_addr, port=716, debug=False):
+def run_pac(server_addr, port=716, debug=False, prefer_sha2=False):
+    """
+    PaCクライアントを実行
+    
+    Args:
+        server_addr: PAAサーバーアドレス
+        port: PAAサーバーポート番号  
+        debug: デバッグログの有効化
+        prefer_sha2: SHA2アルゴリズムを優先（サーバーと一致させる必要あり）
+                    True: SHA2-256を優先（AUTH AVP 16バイト）
+                    False: SHA1を優先（デフォルト、OpenPANA互換、AUTH AVP 20バイト）
+    """
     """Run PANA Client
     
     PANAクライアント（PaC）を起動する
@@ -126,7 +150,9 @@ def run_pac(server_addr, port=716, debug=False):
     print("")
     
     global client
-    client = PANAClient(server_addr, server_port=port)
+    # PaCクライアントインスタンスを作成
+    # prefer_sha2: SHA2アルゴリズム優先フラグ（サーバーと一致させる必要あり）
+    client = PANAClient(server_addr, server_port=port, prefer_sha2=prefer_sha2)
     try:
         client.run()
     except KeyboardInterrupt:
@@ -161,8 +187,13 @@ def main():
         parser.add_argument('--port', type=int, default=716, help='UDP port to listen on')
         parser.add_argument('--bind', default='0.0.0.0', help='IP address to bind to')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+        # SHA2アルゴリズム優先オプション（v2.3.2新機能）
+        # デフォルト: SHA1（OpenPANA互換）、--prefer-sha2: SHA2-256（より安全）
+        parser.add_argument('--prefer-sha2', action='store_true', 
+                           help='Prefer SHA2 algorithms over SHA1 for better security'
+                                ' / SHA2アルゴリズムを優先（より安全だが互換性に注意）')
         args = parser.parse_args()
-        run_paa(port=args.port, bind_addr=args.bind, debug=args.debug)
+        run_paa(port=args.port, bind_addr=args.bind, debug=args.debug, prefer_sha2=args.prefer_sha2)
         
     elif mode == 'pac':
         # PaCモード: PANAクライアントとして動作
@@ -171,8 +202,13 @@ def main():
         parser.add_argument('server', help='PAA server address')
         parser.add_argument('--port', type=int, default=716, help='PAA server port')
         parser.add_argument('--debug', action='store_true', help='Enable debug logging')
+        # SHA2アルゴリズム優先オプション（サーバーと一致させる必要あり）
+        # デフォルト: SHA1（OpenPANA互換）、--prefer-sha2: SHA2-256（より安全）  
+        parser.add_argument('--prefer-sha2', action='store_true',
+                           help='Prefer SHA2 algorithms over SHA1 for better security'
+                                ' / SHA2アルゴリズムを優先（サーバーと一致必須）')
         args = parser.parse_args()
-        run_pac(args.server, port=args.port, debug=args.debug)
+        run_pac(args.server, port=args.port, debug=args.debug, prefer_sha2=args.prefer_sha2)
     else:
         print(f"Error: Invalid mode '{mode}'. Use 'paa' or 'pac'")
         sys.exit(1)

@@ -5,8 +5,8 @@
 
 RFC5191で定義されたPANA（Protocol for carrying Authentication for Network Access）の完全なPython実装です。完全なEAP-TLS認証サポートを含み、OpenSSL 3.xに対応しています。
 
-> **🎉 v2.3.1 リリース (2025-08-26) - RFC 5191完全準拠とテストスイート強化**  
-> **📝 ドキュメント更新: 2025-08-26**
+> **🎉 v2.3.2 リリース (2025-08-27) - SHA2アルゴリズム優先機能追加**  
+> **📝 ドキュメント更新: 2025-08-27**
 > 
 > **✅ すべての主要問題を解決:**
 > - ✅ **PyOpenSSL MSKエクスポート**: `export_keying_material()`による適切な鍵導出
@@ -14,11 +14,16 @@ RFC5191で定義されたPANA（Protocol for carrying Authentication for Network
 > - ✅ **OpenPANA互換性**: プロトコルレベルの問題を修正
 > - ✅ **包括的テスト**: すべてのテストが成功
 > 
-> **🔧 v2.3.1での追加修正:**
+> **🔧 v2.3.2での新機能:**
+> - SHA2アルゴリズム優先モード: `--prefer-sha2`フラグでSHA2-256を優先選択 ✅
+> - アルゴリズム選択機能: SHA1（デフォルト、OpenPANA互換）またはSHA2（強化セキュリティ）✅
+> - AUTH AVPサイズ対応: SHA1-160（20バイト）、SHA2-256-128（16バイト）✅
+> - RFC 5191準拠Nonce交換: S-bitメッセージ後にnonce送信 ✅
+> - EAP識別子管理修正: サーバー側での適切な識別子インクリメント ✅
+> 
+> **v2.3.1での修正:**
 > - PCIメッセージフラグ: RFC 5191 Section 7.1準拠でフラグ=0x0000 ✅
 > - EAP-TLSパケット長: 正確な6バイトベース長計算 ✅
-> - テストスイート強化: 15個のアクティブテスト全て成功 ✅
-> - ドキュメント更新: 包括的なテストドキュメント追加 ✅
 > 
 > **v2.3.0の主要修正:**
 > - PCIメッセージ: 16バイトヘッダーのみ（AVPなし）✅
@@ -82,12 +87,15 @@ PANA（Protocol for carrying Authentication for Network Access）は、クライ
 - **自己署名証明書生成**: テスト用の自動証明書作成
 
 #### セキュリティ機能
-- **メッセージ認証**: HMAC-SHA256ベースのメッセージ完全性（AUTH AVP）
+- **メッセージ認証**: HMAC-SHA1/SHA256ベースのメッセージ完全性（AUTH AVP）
 - **リプレイ攻撃対策**: スライディングウィンドウ機構（32パケットウィンドウ）
 - **暗号化アルゴリズム**:
-  - PRF_HMAC_SHA2_256（キー導出）
-  - AUTH_HMAC_SHA2_256_128（メッセージ完全性）
-  - AES128_CTR（暗号化準備済み）
+  - PRF_HMAC_SHA1（RFC 5191必須、OpenPANA互換）
+  - PRF_HMAC_SHA2_256（強化セキュリティオプション）
+  - AUTH_HMAC_SHA1_160（20バイトAUTH AVP、デフォルト）
+  - AUTH_HMAC_SHA2_256_128（16バイトAUTH AVP、強化セキュリティ）
+  - AES128_CTR（RFC 6786 AVP暗号化）
+- **アルゴリズム選択**: --prefer-sha2フラグによる設定可能SHA1/SHA2優先度
 - **Nonce生成**: セッション確立のためのセキュアなランダムNonce
 - **キー導出**: RFC5191準拠のキー階層（PAC_EP_MASTER_KEY）
 
@@ -257,6 +265,30 @@ python3 main.py pac 127.0.0.1 --debug
 
 これにより、自動生成された自己署名証明書を使用してEAP-TLS認証が実行されます。
 
+### SHA2アルゴリズムによる強化セキュリティ
+
+デフォルトでは、pyPANAはOpenPANA互換性のためSHA1アルゴリズムを使用します。強化セキュリティのためには、`--prefer-sha2`フラグを使用します：
+
+**ターミナル1（SHA2優先のPAA）:**
+```bash
+sudo python3 main.py paa --prefer-sha2 --debug
+```
+
+**ターミナル2（SHA2優先のPaC）:**
+```bash
+python3 main.py pac 127.0.0.1 --prefer-sha2 --debug
+```
+
+**アルゴリズム選択の詳細:**
+- **デフォルトモード（SHA1）**: PRFにHMAC-SHA1、AUTH_HMAC_SHA1_160（20バイトAUTH AVP）を使用
+  - OpenPANAおよびレガシーシステムとの最大互換性
+  - RFC 5191必須アルゴリズム
+- **SHA2モード（--prefer-sha2）**: PRFにHMAC-SHA2-256、AUTH_HMAC_SHA2_256_128（16バイトAUTH AVP）を使用
+  - より強力な暗号アルゴリズムによる強化セキュリティ
+  - PAAとPaCの両方が同じ優先設定を使用する必要あり
+
+**注意:** 認証を成功させるには、PAAとPaCの両方でアルゴリズム優先度が一致している必要があります。
+
 ### コマンドラインオプション
 
 **PAA（サーバー）オプション:**
@@ -267,6 +299,7 @@ python3 main.py paa [オプション]
   --bind ADDRESS        特定のIPアドレスにバインド（デフォルト: 0.0.0.0）
   --port PORT          リッスンするUDPポート（デフォルト: 716）
   --debug              デバッグログを有効化
+  --prefer-sha2        SHA2アルゴリズムをSHA1より優先（より安全だが互換性低下）
   --radius-server IP   RADIUSサーバーのIPアドレス
   --radius-port PORT   RADIUSサーバーポート（デフォルト: 1812）
   --radius-secret SECRET  RADIUS共有シークレット
@@ -281,6 +314,7 @@ python3 main.py pac SERVER_IP [オプション]
 オプション:
   --port PORT          PAAサーバーポート（デフォルト: 716）
   --debug              デバッグログを有効化
+  --prefer-sha2        SHA2アルゴリズムをSHA1より優先（サーバー設定と一致必須）
   --timeout SEC        接続タイムアウト（デフォルト: 10）
   --enable-encryption  RFC 6786 AVP暗号化を有効化
 ```

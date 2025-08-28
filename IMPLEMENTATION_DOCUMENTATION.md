@@ -25,7 +25,7 @@ pyPANA is a comprehensive Python implementation of the Protocol for carrying Aut
 - **Modular Architecture**: Clean separation of concerns with 25+ specialized modules
 - **Comprehensive Testing**: 15 active test files with full RFC compliance coverage
 
-### Current Implementation Status (v2.3.1)
+### Current Implementation Status (v2.3.2)
 
 #### ✅ Fully Implemented
 - **Core PANA Protocol (RFC 5191)**
@@ -43,6 +43,7 @@ pyPANA is a comprehensive Python implementation of the Protocol for carrying Aut
   - Encryption algorithm negotiation
   - Policy-based encryption enforcement
   - Anti-replay protection with sliding window
+  - Configurable SHA1/SHA2 algorithm preference (v2.3.2)
 
 - **EAP-TLS Authentication**
   - Complete PyOpenSSL-based implementation
@@ -220,13 +221,42 @@ PANA_PAA_ENCR_KEY = prf+(MSK, "IETF PANA PAA Encr"|I_PAR|I_PAN|PaC_nonce|PAA_non
 
 ### Supported Algorithms
 
-| Type | Algorithm | ID | Description |
-|------|-----------|-----|-------------|
-| PRF | PRF_HMAC_SHA1 | 2 | RFC 5191 mandatory |
-| PRF | PRF_HMAC_SHA2_256 | 5 | Enhanced security |
-| Integrity | AUTH_HMAC_SHA1_160 | 7 | 160-bit HMAC-SHA1 |
-| Integrity | AUTH_HMAC_SHA2_256_128 | 12 | 128-bit truncated HMAC-SHA256 |
-| Encryption | AES128_CTR | 1 | AES-128 in counter mode |
+| Type | Algorithm | ID | Description | Default |
+|------|-----------|-----|-------------|----------|
+| PRF | PRF_HMAC_SHA1 | 2 | RFC 5191 mandatory | Yes |
+| PRF | PRF_HMAC_SHA2_256 | 5 | Enhanced security | With --prefer-sha2 |
+| Integrity | AUTH_HMAC_SHA1_160 | 7 | 160-bit HMAC-SHA1 (20 bytes) | Yes |
+| Integrity | AUTH_HMAC_SHA2_256_128 | 12 | 128-bit truncated HMAC-SHA256 (16 bytes) | With --prefer-sha2 |
+| Encryption | AES128_CTR | 1 | AES-128 in counter mode | N/A |
+
+### Algorithm Selection and Preference
+
+As of v2.3.1, pyPANA supports configurable algorithm preference via the `--prefer-sha2` command-line flag:
+
+#### Default Mode (OpenPANA Compatible)
+- **PRF**: HMAC-SHA1 (ID: 2)
+- **Integrity**: AUTH_HMAC_SHA1_160 (ID: 7)
+- **AUTH AVP Size**: 20 bytes
+- **Compatibility**: Maximum compatibility with OpenPANA and legacy PANA implementations
+- **Usage**: No additional flags required (default behavior)
+
+#### Enhanced Security Mode (SHA2 Preference)
+- **PRF**: HMAC-SHA2-256 (ID: 5)
+- **Integrity**: AUTH_HMAC_SHA2_256_128 (ID: 12)
+- **AUTH AVP Size**: 16 bytes (truncated to 128 bits)
+- **Security**: Stronger cryptographic algorithms
+- **Usage**: Add `--prefer-sha2` flag to both PAA and PaC
+
+#### Algorithm Negotiation Process
+1. **PAA Offers**: Server lists algorithms in preference order
+   - Default: SHA1 first, SHA2 second
+   - With --prefer-sha2: SHA2 first, SHA1 second
+2. **PaC Selects**: Client chooses based on its preference and available options
+   - Default: Prefers SHA1 if available
+   - With --prefer-sha2: Prefers SHA2 if available
+3. **Verification**: Both sides use selected algorithms for key derivation and AUTH AVP
+
+**Important**: Both PAA and PaC must use matching preference settings for optimal security. Mixed preferences will result in SHA1 selection for compatibility.
 
 ### AVP Encryption (RFC 6786)
 

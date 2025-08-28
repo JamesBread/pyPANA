@@ -2,8 +2,8 @@
 
 このガイドでは、pyPANAをコマンドラインツールとして実行する方法と、Pythonライブラリとして使用する方法を説明します。
 
-> **📝 最終更新: 2025-08-22**  
-> v2.3.0 のRFC準拠改善に基づいて更新されました。
+> **📝 最終更新: 2025-08-27**  
+> v2.3.2 のSHA2アルゴリズム優先機能追加に基づいて更新されました。
 
 ## 目次
 - [インストール](#インストール)
@@ -62,6 +62,7 @@ python3 main.py paa --port 5555 --debug
 | `--bind ADDRESS` | バインドするIPアドレス | 0.0.0.0 |
 | `--port PORT` | リッスンするUDPポート | 716 |
 | `--debug` | デバッグログを有効化 | False |
+| `--prefer-sha2` | SHA2アルゴリズムを優先（より安全） | False |
 | `--radius-server IP` | RADIUSサーバーのIP | なし |
 | `--radius-port PORT` | RADIUSサーバーのポート | 1812 |
 | `--radius-secret SECRET` | RADIUS共有シークレット | なし |
@@ -101,6 +102,7 @@ python3 main.py pac 127.0.0.1 --port 5555 --debug
 | `SERVER_IP` | PAAサーバーのIPアドレス | 必須 |
 | `--port PORT` | PAAサーバーのポート | 716 |
 | `--debug` | デバッグログを有効化 | False |
+| `--prefer-sha2` | SHA2アルゴリズムを優先（サーバーと一致必須） | False |
 | `--timeout SEC` | 接続タイムアウト | 10 |
 | `--enable-encryption` | RFC 6786 AVP暗号化を有効化 | False |
 
@@ -116,6 +118,45 @@ python3 main.py pac 192.168.1.100 --enable-encryption --debug
 # タイムアウトを設定して接続
 python3 main.py pac 192.168.1.100 --timeout 30
 ```
+
+### SHA2アルゴリズムの使用（v2.3.2新機能）
+
+pyPANAはデフォルトではOpenPANA互換性のためSHA1アルゴリズムを使用しますが、`--prefer-sha2`フラグを使用することでより安全なSHA2アルゴリズムを優先できます。
+
+#### デフォルトモード（SHA1優先）
+
+```bash
+# PAAサーバー（SHA1優先）
+sudo python3 main.py paa --debug
+
+# PaCクライアント（SHA1優先）  
+python3 main.py pac 127.0.0.1 --debug
+```
+
+**選択されるアルゴリズム:**
+- PRF: HMAC-SHA1 (ID: 2)
+- 完全性: AUTH_HMAC_SHA1_160 (20バイトAUTH AVP)
+- 互換性: OpenPANAおよびレガシーシステムと互換
+
+#### SHA2優先モード（強化セキュリティ）
+
+```bash
+# PAAサーバー（SHA2優先）
+sudo python3 main.py paa --prefer-sha2 --debug
+
+# PaCクライアント（SHA2優先）
+python3 main.py pac 127.0.0.1 --prefer-sha2 --debug
+```
+
+**選択されるアルゴリズム:**
+- PRF: HMAC-SHA2-256 (ID: 5)
+- 完全性: AUTH_HMAC_SHA2_256_128 (16バイトAUTH AVP)
+- セキュリティ: より強力な暗号化アルゴリズム
+
+**重要:** 
+- PAAとPaCの両方が同じ優先設定を使用する必要があります
+- 異なる設定の場合、互換性のためSHA1が選択されます
+- SHA2モードは古い実装と互換性がない場合があります
 
 ## Pythonライブラリとしての使用
 
@@ -362,7 +403,7 @@ if __name__ == "__main__":
 
 ### RFC準拠のセキュリティ強化
 
-pyPANA v2.3.0では、RFC5191/RFC6786準拠のセキュリティ機能が強化されています：
+pyPANA v2.3.2では、RFC5191/RFC6786準拠のセキュリティ機能が強化されています：
 
 #### 1. AUTH AVP強制 (RFC5191)
 

@@ -74,9 +74,26 @@ class PANAAuthAgent:
     """
     def __init__(self, bind_addr='0.0.0.0', bind_port=716,
                  radius_server=None, radius_port=1812, radius_secret=None,
-                 encryption_policy=None):
+                 encryption_policy=None, prefer_sha2=False):
         """
         PANA認証エージェントの初期化
+        
+        引数:
+            bind_addr: バインドアドレス
+            bind_port: バインドポート
+            radius_server: RADIUSサーバーアドレス
+            radius_port: RADIUSポート  
+            radius_secret: RADIUS共有シークレット
+            encryption_policy: RFC6786暗号化ポリシー
+            prefer_sha2: SHA2アルゴリズム優先フラグ（v2.3.2新機能）
+                        True: アルゴリズムリストでSHA2を先頭に配置
+                              PRF_HMAC_SHA2_256 (ID:5) を最優先
+                              AUTH_HMAC_SHA2_256_128 (ID:12) を最優先
+                              クライアントにSHA2選択を推奨
+                        False: アルゴリズムリストでSHA1を先頭に配置（デフォルト）
+                               PRF_HMAC_SHA1 (ID:2) を最優先  
+                               AUTH_HMAC_SHA1_160 (ID:7) を最優先
+                               OpenPANAとの互換性を確保
         
         引数:
             bind_addr: バインドするIPアドレス（デフォルト: 0.0.0.0 = 全インターフェース）
@@ -89,6 +106,11 @@ class PANAAuthAgent:
         # サーバー設定の保存
         self.bind_addr = bind_addr
         self.bind_port = bind_port
+        # SHA2アルゴリズム優先フラグ（v2.3.2で追加）
+        # PARメッセージで提示するアルゴリズムの順序を制御
+        # True: SHA2を先頭に提示（より安全だがOpenPANAと互換性なし）
+        # False: SHA1を先頭に提示（RFC 5191必須、OpenPANA互換）
+        self.prefer_sha2 = prefer_sha2
         self.radius_server = radius_server
         self.radius_port = radius_port
         self.radius_secret = radius_secret
@@ -261,13 +283,29 @@ class PANAAuthAgent:
         self.logger.debug(f"Generated PAA nonce for later use: {session.crypto_ctx.nonce_paa.hex()}")
         
         # RFC5191準拠: PAAが複数のアルゴリズム候補を提示
-        # PRF candidates (SHA1 first for OpenPANA compatibility, per RFC5191)
-        auth_req.add_avp(create_avp_uint32(AVP_PRF_ALGORITHM, PRF_HMAC_SHA1))
-        auth_req.add_avp(create_avp_uint32(AVP_PRF_ALGORITHM, PRF_HMAC_SHA2_256))
-        
-        # Integrity candidates (SHA1 first for OpenPANA compatibility)
-        auth_req.add_avp(create_avp_uint32(AVP_INTEGRITY_ALGORITHM, AUTH_HMAC_SHA1_160))
-        auth_req.add_avp(create_avp_uint32(AVP_INTEGRITY_ALGORITHM, AUTH_HMAC_SHA2_256_128))
+        # prefer_sha2フラグに基づいてアルゴリズムの提示順を変更（v2.3.2）
+        if self.prefer_sha2:
+            # SHA2を優先（より安全だが互換性に注意）
+            # PRFアルゴリズム候補：SHA2-256 (ID:5) を先頭に提示
+            auth_req.add_avp(create_avp_uint32(AVP_PRF_ALGORITHM, PRF_HMAC_SHA2_256))  # 優先: SHA2-256
+            auth_req.add_avp(create_avp_uint32(AVP_PRF_ALGORITHM, PRF_HMAC_SHA1))      # 代替: SHA1
+            
+            # Integrityアルゴリズム候補：SHA2-256-128 (ID:12) を先頭に提示
+            # AUTH AVP: 16バイト（128ビットに切り詰め）
+            auth_req.add_avp(create_avp_uint32(AVP_INTEGRITY_ALGORITHM, AUTH_HMAC_SHA2_256_128))  # 優先: SHA2
+            auth_req.add_avp(create_avp_uint32(AVP_INTEGRITY_ALGORITHM, AUTH_HMAC_SHA1_160))       # 代替: SHA1
+            self.logger.debug("アルゴリズム提示順: SHA2優先モード")
+        else:
+            # SHA1を優先（RFC5191必須、OpenPANA互換）
+            # PRFアルゴリズム候補：SHA1 (ID:2) を先頭に提示
+            auth_req.add_avp(create_avp_uint32(AVP_PRF_ALGORITHM, PRF_HMAC_SHA1))       # 優先: SHA1（RFC5191必須）
+            auth_req.add_avp(create_avp_uint32(AVP_PRF_ALGORITHM, PRF_HMAC_SHA2_256))  # 代替: SHA2-256
+            
+            # Integrityアルゴリズム候補：SHA1-160 (ID:7) を先頭に提示
+            # AUTH AVP: 20バイト（160ビット）、OpenPANA互換
+            auth_req.add_avp(create_avp_uint32(AVP_INTEGRITY_ALGORITHM, AUTH_HMAC_SHA1_160))       # 優先: SHA1
+            auth_req.add_avp(create_avp_uint32(AVP_INTEGRITY_ALGORITHM, AUTH_HMAC_SHA2_256_128))  # 代替: SHA2
+            self.logger.debug("アルゴリズム提示順: SHA1優先モード（デフォルト、OpenPANA互換）")
         
         # RFC 6786: Add encryption algorithm candidates if enabled
         if self.encryption_helper and hasattr(self.encryption_helper, 'is_encryption_enabled') and self.encryption_helper.is_encryption_enabled():
