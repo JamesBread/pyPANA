@@ -6,40 +6,6 @@
 
 A complete Python implementation of the Protocol for carrying Authentication for Network Access (PANA) as defined in RFC 5191 and RFC 6786. This implementation includes full EAP-TLS authentication support, AVP encryption capabilities, and is compatible with OpenSSL 3.x.
 
-> **🎉 v2.3.0 Release (2025-08-26) - COMPLETE RFC 5191 COMPLIANCE**  
-> **📝 Documentation updated: 2025-08-26**  
-> **🔧 PCI Flags Fixed: Now correctly set to 0x0000 per RFC 5191 Section 7.1**
-> 
-> **✅ All Major Issues Resolved:**
-> - ✅ **PyOpenSSL MSK Export**: Proper key derivation via `export_keying_material()`
-> - ✅ **RFC 5191 Compliance**: All mandatory requirements implemented
-> - ✅ **OpenPANA Compatibility**: Protocol-level issues fixed
-> - ✅ **Comprehensive Testing**: All tests passing
-> 
-> **🔧 Key Fixes Applied:**
-> - PCI message: 16-byte header only (no AVPs, flags=0x0000) ✅
-> - Nonce exchange: After S-bit messages (RFC 5191 timing) ✅
-> - AUTH AVP: 20 bytes with SHA1_160 ✅
-> - Default algorithms: SHA1 (RFC mandatory) ✅
-> - I_PAR/I_PAN storage: Fixed for proper key derivation ✅
-> - EAP-TLS packet length: Fixed for proper flag field handling ✅
-> 
-> **📊 Current Status:**
-> - **pyPANA ↔ pyPANA**: ✅ Full authentication working
-> - **RFC 5191 Compliance**: ✅ Complete
-> - **OpenPANA Compatibility**: ✅ Protocol-level compatible
-> - **Production Ready**: ✅ With proper MSK derivation
-> 
-> **🧪 Quick Verification:** Run `python3 verify_compatibility.py`
-> 
-> **🔒 Previously Fixed (2025-08-20):**
-> - ❌ Removed custom fragmentation mechanism (RFC 5191 Section 5.1 violation)
-> - 🎲 Random sequence number initialization (RFC 5191 Section 5.2) 
-> - ♾️ Proper sequence number wrapping at 2^32
-> - 🔐 Runtime encryption policy validation (RFC 6786 Section 3)
-> - Result-Code values: PANA_SUCCESS = 0, PANA_AUTHENTICATION_REJECTED = 1
-> 
-> **🧪 Test Status:** All core tests passing with PyOpenSSL ✅
 
 ## What is PANA?
 
